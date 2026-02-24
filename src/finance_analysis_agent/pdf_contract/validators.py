@@ -139,8 +139,8 @@ def _validate_row(row: PdfExtractedRow, row_index: int) -> list[PdfContractError
             )
         )
 
-    parse_status = row.parse_status or ""
-    if not isinstance(parse_status, str):
+    raw_parse_status = row.parse_status
+    if not isinstance(raw_parse_status, str):
         errors.append(
             _error(
                 code="response_invalid",
@@ -148,6 +148,20 @@ def _validate_row(row: PdfExtractedRow, row_index: int) -> list[PdfContractError
                 stage="response_validation",
                 row_index=row_index,
                 field="parse_status",
+            )
+        )
+        return errors
+
+    parse_status = raw_parse_status.strip()
+    if not parse_status:
+        errors.append(
+            _error(
+                code="response_invalid",
+                message="row parse_status is required",
+                stage="response_validation",
+                row_index=row_index,
+                field="parse_status",
+                value=raw_parse_status,
             )
         )
         return errors
@@ -271,4 +285,3 @@ def validate_pdf_subagent_response(response: PdfSubagentResponse) -> list[PdfCon
         errors.extend(_validate_row(row, row_index))
 
     return errors
-

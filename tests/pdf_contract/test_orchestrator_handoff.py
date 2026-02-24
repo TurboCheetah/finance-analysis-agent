@@ -240,3 +240,34 @@ def test_adapter_exception_returns_structured_failure(db_session: Session, tmp_p
     run_metadata = db_session.get(RunMetadata, result.run_metadata_id)
     assert run_metadata is not None
     assert run_metadata.status == "failed"
+
+
+def test_start_run_accepts_string_modes_without_crashing(db_session: Session, tmp_path: Path) -> None:
+    _seed_account(db_session)
+    statement = tmp_path / "statement.pdf"
+    statement.write_bytes(b"fake-pdf-content")
+
+    # Intentionally provide string values to ensure run metadata setup is resilient.
+    request = PdfSubagentRequest(
+        contract_version="1.0.0",
+        statement_path=str(statement),
+        account_id="acct-pdf",
+        schema_version="1.0.0",
+        actor="pdf-orchestrator-test",
+        confidence_threshold=0.8,
+        conflict_mode="normal",  # type: ignore[arg-type]
+        ocr_mode="auto",  # type: ignore[arg-type]
+        source_ref="fixtures/statement.pdf",
+    )
+
+    result = run_pdf_subagent_handoff(
+        request,
+        DeterministicFakePdfSubagentAdapter(error=RuntimeError("boom")),
+        db_session,
+    )
+    db_session.commit()
+
+    assert result.ok is False
+    assert any(error.code == "adapter_failure" for error in result.errors)
+    run_metadata = db_session.get(RunMetadata, result.run_metadata_id)
+    assert run_metadata is not None

@@ -12,11 +12,17 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.ingest.import_batch_service import ingest_transactions
-from finance_analysis_agent.ingest.types import CanonicalTransactionInput, IngestRequest, SourceType
+from finance_analysis_agent.ingest.types import (
+    CanonicalTransactionInput,
+    ConflictMode,
+    IngestRequest,
+    SourceType,
+)
 from finance_analysis_agent.pdf_contract.adapter import PdfSubagentAdapter
 from finance_analysis_agent.pdf_contract.types import (
     PdfContractError,
     PdfExtractedRow,
+    PdfOcrMode,
     PdfOrchestratorResult,
     PdfSubagentRequest,
 )
@@ -51,7 +57,21 @@ def _normalize_for_hash(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _enumish_value(value: Any, enum_type: type[Any]) -> str:
+    if hasattr(value, "value"):
+        return str(value.value)
+    if isinstance(value, str):
+        try:
+            return str(enum_type(value).value)
+        except Exception:
+            return value
+    return str(value)
+
+
 def _start_run(request: PdfSubagentRequest, session: Session) -> str:
+    ocr_mode = _enumish_value(request.ocr_mode, PdfOcrMode)
+    conflict_mode = _enumish_value(request.conflict_mode, ConflictMode)
+
     run = start_run_metadata(
         RunMetadataStartRequest(
             pipeline_name=PIPELINE_NAME,
@@ -60,8 +80,8 @@ def _start_run(request: PdfSubagentRequest, session: Session) -> str:
             config_hash=_normalize_for_hash(
                 {
                     "expected_contract_version": EXPECTED_CONTRACT_VERSION,
-                    "ocr_mode": request.ocr_mode.value,
-                    "conflict_mode": request.conflict_mode.value,
+                    "ocr_mode": ocr_mode,
+                    "conflict_mode": conflict_mode,
                     "confidence_threshold": request.confidence_threshold,
                 }
             ),

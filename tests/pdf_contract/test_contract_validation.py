@@ -64,7 +64,7 @@ def test_request_and_response_validation_accept_valid_payloads(tmp_path: Path) -
     assert response_errors == []
 
 
-def test_request_validation_rejects_relative_path_and_invalid_fields(tmp_path: Path) -> None:
+def test_request_validation_rejects_relative_path_and_invalid_fields() -> None:
     bad = PdfSubagentRequest(
         contract_version="one.two.three",
         statement_path="relative/path.pdf",
