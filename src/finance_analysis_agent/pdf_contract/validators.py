@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +69,17 @@ def validate_pdf_subagent_request(request: PdfSubagentRequest) -> list[PdfContra
             )
         )
 
-    if not request.statement_path or not Path(request.statement_path).is_absolute():
+    if not isinstance(request.statement_path, str) or not request.statement_path.strip():
+        errors.append(
+            _error(
+                code="request_invalid",
+                message="statement_path must be a non-empty string absolute local path",
+                stage="request_validation",
+                field="statement_path",
+                value=request.statement_path,
+            )
+        )
+    elif not Path(request.statement_path).is_absolute():
         errors.append(
             _error(
                 code="request_invalid",
@@ -103,12 +115,7 @@ def validate_pdf_subagent_request(request: PdfSubagentRequest) -> list[PdfContra
         )
 
     if request.page_range is not None:
-        if (
-            not isinstance(request.page_range, tuple)
-            or len(request.page_range) != 2
-            or request.page_range[0] <= 0
-            or request.page_range[1] < request.page_range[0]
-        ):
+        if not isinstance(request.page_range, tuple) or len(request.page_range) != 2:
             errors.append(
                 _error(
                     code="request_invalid",
@@ -118,6 +125,23 @@ def validate_pdf_subagent_request(request: PdfSubagentRequest) -> list[PdfContra
                     value=request.page_range,
                 )
             )
+        else:
+            start, end = request.page_range
+            if (
+                not isinstance(start, int)
+                or not isinstance(end, int)
+                or start <= 0
+                or end < start
+            ):
+                errors.append(
+                    _error(
+                        code="request_invalid",
+                        message="page_range must contain positive integer bounds (start <= end)",
+                        stage="request_validation",
+                        field="page_range",
+                        value=request.page_range,
+                    )
+                )
 
     return errors
 
@@ -182,6 +206,44 @@ def _validate_row(row: PdfExtractedRow, row_index: int) -> list[PdfContractError
                         stage="response_validation",
                         row_index=row_index,
                         field=field_name,
+                    )
+                )
+
+        if row.posted_date is not None and not isinstance(row.posted_date, (str, date)):
+            errors.append(
+                _error(
+                    code="response_invalid",
+                    message="parsed row posted_date must be ISO date string or date object",
+                    stage="response_validation",
+                    row_index=row_index,
+                    field="posted_date",
+                    value=row.posted_date,
+                )
+            )
+
+        if row.amount is not None and not isinstance(row.amount, (str, int, float, Decimal)):
+            errors.append(
+                _error(
+                    code="response_invalid",
+                    message="parsed row amount must be decimal-compatible scalar",
+                    stage="response_validation",
+                    row_index=row_index,
+                    field="amount",
+                    value=row.amount,
+                )
+            )
+
+        for field_name in ("currency", "pending_status"):
+            value = getattr(row, field_name)
+            if value is not None and not isinstance(value, str):
+                errors.append(
+                    _error(
+                        code="response_invalid",
+                        message=f"parsed row {field_name} must be a string",
+                        stage="response_validation",
+                        row_index=row_index,
+                        field=field_name,
+                        value=value,
                     )
                 )
 

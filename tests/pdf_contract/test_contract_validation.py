@@ -112,3 +112,51 @@ def test_response_validation_rejects_invalid_rows_and_tiers() -> None:
     assert any("missing required field: posted_date" in message for message in messages)
     assert any("missing required field: amount" in message for message in messages)
     assert any("row confidence" in message for message in messages)
+
+
+def test_request_validation_rejects_non_string_statement_path_and_bad_page_range_types() -> None:
+    bad = PdfSubagentRequest(
+        contract_version="1.2.3",
+        statement_path=123,  # type: ignore[arg-type]
+        account_id="acct-1",
+        schema_version="1.0.0",
+        actor="tester",
+        confidence_threshold=0.8,
+        page_range=("1", "2"),  # type: ignore[arg-type]
+    )
+
+    errors = validate_pdf_subagent_request(bad)
+    details = {(error.details.get("field"), error.message) for error in errors}
+
+    assert any(field == "statement_path" for field, _ in details)
+    assert any(field == "page_range" for field, _ in details)
+
+
+def test_response_validation_rejects_invalid_parsed_row_field_types() -> None:
+    response = PdfSubagentResponse(
+        contract_version="1.0.0",
+        subagent_version_hash="subagent-sha",
+        extraction_tiers_used=[PdfExtractionTier.TEXT_HEURISTIC],
+        rows=[
+            PdfExtractedRow(
+                account_id="acct-1",
+                posted_date=object(),  # type: ignore[arg-type]
+                amount={"bad": "type"},  # type: ignore[arg-type]
+                currency=5,  # type: ignore[arg-type]
+                pending_status=6,  # type: ignore[arg-type]
+                confidence=0.8,
+                parse_status="parsed",
+                page_no=1,
+                row_no=1,
+            )
+        ],
+        diagnostics=PdfDiagnostics(),
+    )
+
+    errors = validate_pdf_subagent_response(response)
+    messages = [error.message for error in errors]
+
+    assert any("posted_date must be ISO date string or date object" in message for message in messages)
+    assert any("amount must be decimal-compatible scalar" in message for message in messages)
+    assert any("currency must be a string" in message for message in messages)
+    assert any("pending_status must be a string" in message for message in messages)

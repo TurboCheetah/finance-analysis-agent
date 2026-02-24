@@ -49,8 +49,10 @@ def test_transition_rejects_invalid_jump_and_writes_no_event(db_session: Session
             session=db_session,
         )
 
-    db_session.rollback()
     assert db_session.scalar(select(func.count()).select_from(ImportBatchStatusEvent)) == 1
+    persisted = db_session.get(ImportBatch, batch.id)
+    assert persisted is not None
+    assert persisted.status == ImportBatchStatus.PARSED.value
 
 
 def test_failed_is_terminal_after_transition(db_session: Session) -> None:

@@ -43,7 +43,7 @@ LOGGER = logging.getLogger(__name__)
 def _normalize_decimal(value: Decimal | None) -> str | None:
     if value is None:
         return None
-    return format(value, "f")
+    return format(value.normalize(), "f")
 
 
 def _canonical_raw_payload(txn: CanonicalTransactionInput, row_index: int) -> dict[str, object]:
