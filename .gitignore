@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+finance_os.db
