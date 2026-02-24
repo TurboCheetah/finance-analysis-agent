@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+import logging
 from decimal import Decimal
 from uuid import uuid4
 
@@ -25,6 +25,7 @@ from finance_analysis_agent.ingest.types import (
     IngestRequest,
     IngestResult,
 )
+from finance_analysis_agent.utils.time import utcnow
 
 STATUS_SEQUENCE = [
     ImportBatchStatus.RECEIVED,
@@ -36,11 +37,7 @@ STATUS_SEQUENCE = [
     ImportBatchStatus.FINALIZED,
 ]
 TERMINAL_STATUSES = {ImportBatchStatus.FINALIZED, ImportBatchStatus.FAILED}
-
-
-def _utcnow() -> datetime:
-    # Store UTC timestamp as a naive datetime for SQLite compatibility.
-    return datetime.now(UTC).replace(tzinfo=None)
+LOGGER = logging.getLogger(__name__)
 
 
 def _normalize_decimal(value: Decimal | None) -> str | None:
@@ -88,6 +85,13 @@ def _derive_synthetic_source_transaction_id(
 
 
 def _is_valid_transition(from_status: ImportBatchStatus, to_status: ImportBatchStatus) -> bool:
+    if from_status not in STATUS_SEQUENCE and from_status != ImportBatchStatus.FAILED:
+        label = from_status.value if isinstance(from_status, ImportBatchStatus) else str(from_status)
+        raise ValueError(f"Unknown status: {label}")
+    if to_status not in STATUS_SEQUENCE and to_status != ImportBatchStatus.FAILED:
+        label = to_status.value if isinstance(to_status, ImportBatchStatus) else str(to_status)
+        raise ValueError(f"Unknown status: {label}")
+
     if from_status in TERMINAL_STATUSES:
         return False
     if to_status == ImportBatchStatus.FAILED:
@@ -114,7 +118,7 @@ def _record_status_event(
             to_status=to_status.value,
             reason=reason,
             actor=actor,
-            changed_at=_utcnow(),
+            changed_at=utcnow(),
         )
     )
 
@@ -138,7 +142,7 @@ def transition_import_batch_status(
 
     batch.status = to_status.value
     if to_status == ImportBatchStatus.FINALIZED:
-        batch.finalized_at = _utcnow()
+        batch.finalized_at = utcnow()
     if to_status == ImportBatchStatus.FAILED and reason:
         batch.error_summary = reason
 
@@ -203,7 +207,7 @@ def ingest_transactions(request: IngestRequest, session: Session) -> IngestResul
         override_reason=request.override_reason,
         override_of_batch_id=override_of_batch_id,
         status=ImportBatchStatus.RECEIVED.value,
-        received_at=_utcnow(),
+        received_at=utcnow(),
     )
     session.add(batch)
     session.flush()
@@ -282,6 +286,7 @@ def ingest_transactions(request: IngestRequest, session: Session) -> IngestResul
                 skipped_transactions += 1
                 continue
 
+            transaction_timestamp = utcnow()
             session.add(
                 Transaction(
                     id=str(uuid4()),
@@ -302,8 +307,8 @@ def ingest_transactions(request: IngestRequest, session: Session) -> IngestResul
                     source_transaction_id=source_transaction_id,
                     import_batch_id=batch.id,
                     transfer_group_id=txn.transfer_group_id,
-                    created_at=_utcnow(),
-                    updated_at=_utcnow(),
+                    created_at=transaction_timestamp,
+                    updated_at=transaction_timestamp,
                 )
             )
             inserted_transactions += 1
@@ -338,15 +343,21 @@ def ingest_transactions(request: IngestRequest, session: Session) -> IngestResul
         session.flush()
     except Exception as exc:
         if ImportBatchStatus(batch.status) not in TERMINAL_STATUSES:
-            transition_import_batch_status(
-                batch_id=batch.id,
-                to_status=ImportBatchStatus.FAILED,
-                reason=str(exc),
-                actor=request.actor,
-                session=session,
-            )
-            status_history.append(ImportBatchStatus.FAILED)
-            session.flush()
+            try:
+                transition_import_batch_status(
+                    batch_id=batch.id,
+                    to_status=ImportBatchStatus.FAILED,
+                    reason=str(exc),
+                    actor=request.actor,
+                    session=session,
+                )
+                status_history.append(ImportBatchStatus.FAILED)
+                session.flush()
+            except Exception:
+                LOGGER.exception(
+                    "Failed to transition ImportBatch %s to failed status after ingest error",
+                    batch.id,
+                )
         raise
 
     return IngestResult(

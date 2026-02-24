@@ -5,16 +5,8 @@ from pathlib import Path
 
 import sqlalchemy as sa
 from alembic import command
-from alembic.config import Config
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _alembic_config(database_url: str) -> Config:
-    config = Config(str(PROJECT_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    return config
+from tests.helpers import alembic_config
 
 
 def _assert_expected_indexes(inspector: sa.Inspector) -> None:
@@ -53,12 +45,16 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
 def test_alembic_upgrade_downgrade_smoke(tmp_path: Path) -> None:
     database_file = tmp_path / "tur31_smoke.db"
     database_url = f"sqlite:///{database_file}"
-    config = _alembic_config(database_url)
+    config = alembic_config(database_url)
 
     command.upgrade(config, "head")
 
-    inspector = sa.inspect(sa.create_engine(database_url))
-    assert "transactions" in inspector.get_table_names()
+    first_engine = sa.create_engine(database_url)
+    try:
+        inspector = sa.inspect(first_engine)
+        assert "transactions" in inspector.get_table_names()
+    finally:
+        first_engine.dispose()
 
     command.downgrade(config, "base")
 
@@ -73,14 +69,18 @@ def test_alembic_upgrade_downgrade_smoke(tmp_path: Path) -> None:
 
     command.upgrade(config, "head")
 
-    inspector = sa.inspect(sa.create_engine(database_url))
-    assert "run_metadata" in inspector.get_table_names()
+    second_engine = sa.create_engine(database_url)
+    try:
+        inspector = sa.inspect(second_engine)
+        assert "run_metadata" in inspector.get_table_names()
+    finally:
+        second_engine.dispose()
 
 
 def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> None:
     database_file = tmp_path / "tur31_schema.db"
     database_url = f"sqlite:///{database_file}"
-    config = _alembic_config(database_url)
+    config = alembic_config(database_url)
     command.upgrade(config, "head")
 
     engine = sa.create_engine(database_url)

@@ -214,9 +214,6 @@ class Tag(Base):
 
 class TransactionTag(Base):
     __tablename__ = "transaction_tags"
-    __table_args__ = (
-        UniqueConstraint("transaction_id", "tag_id", name="uq_transaction_tags_transaction_id_tag_id"),
-    )
 
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id"), primary_key=True)
     tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id"), primary_key=True)

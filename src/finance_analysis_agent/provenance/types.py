@@ -99,12 +99,11 @@ class RunMetadataFinishRequest:
     diagnostics_json: dict[str, Any] | None = None
 
 
-def normalize_tracked_value(field: str, value: Any) -> Any:
+def normalize_tracked_value(field_name: str, value: Any) -> Any:
     """Normalize tracked field values for JSON/event payloads."""
 
     if value is None:
         return None
-    if field == "amount" and isinstance(value, Decimal):
+    if field_name == "amount" and isinstance(value, Decimal):
         return format(value, "f")
     return value
-

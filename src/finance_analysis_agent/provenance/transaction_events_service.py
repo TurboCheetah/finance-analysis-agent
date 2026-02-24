@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
@@ -17,12 +16,9 @@ from finance_analysis_agent.provenance.types import (
     TransactionMutationResult,
     normalize_tracked_value,
 )
+from finance_analysis_agent.utils.time import utcnow
 
 EVENT_TYPE_PREFIX = "transaction.field_updated."
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _coerce_field_value(field: str, value: Any) -> Any:
@@ -98,6 +94,7 @@ def mutate_transaction_fields(
         )
 
     event_ids: list[str] = []
+    event_timestamp = utcnow()
     for field, old_value, new_value in diffs:
         setattr(transaction, field, new_value)
 
@@ -113,11 +110,11 @@ def mutate_transaction_fields(
                 reason=request.reason,
                 actor=request.actor,
                 provenance=provenance.value,
-                created_at=_utcnow(),
+                created_at=event_timestamp,
             )
         )
 
-    transaction.updated_at = _utcnow()
+    transaction.updated_at = event_timestamp
     session.flush()
 
     return TransactionMutationResult(

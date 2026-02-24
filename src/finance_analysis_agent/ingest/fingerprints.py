@@ -35,7 +35,7 @@ def compute_source_fingerprint(
     """Compute deterministic source fingerprint for ImportBatch idempotency."""
 
     if source_type in {SourceType.PDF, SourceType.CSV}:
-        if not payload_bytes:
+        if payload_bytes is None:
             raise ValueError("payload_bytes is required for PDF/CSV source types")
         payload_digest = _sha256_hexdigest(payload_bytes)
     else:
@@ -45,4 +45,3 @@ def compute_source_fingerprint(
 
     envelope = f"{source_type.value}|{schema_version}|{payload_digest}".encode("utf-8")
     return _sha256_hexdigest(envelope), FINGERPRINT_ALGO
-

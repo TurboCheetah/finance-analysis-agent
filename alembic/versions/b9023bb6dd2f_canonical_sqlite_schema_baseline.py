@@ -436,8 +436,7 @@ def upgrade() -> None:
     sa.Column('tag_id', sa.String(), nullable=False),
     sa.ForeignKeyConstraint(['tag_id'], ['tags.id'], name=op.f('fk_transaction_tags_tag_id_tags')),
     sa.ForeignKeyConstraint(['transaction_id'], ['transactions.id'], name=op.f('fk_transaction_tags_transaction_id_transactions')),
-    sa.PrimaryKeyConstraint('transaction_id', 'tag_id', name=op.f('pk_transaction_tags')),
-    sa.UniqueConstraint('transaction_id', 'tag_id', name='uq_transaction_tags_transaction_id_tag_id')
+    sa.PrimaryKeyConstraint('transaction_id', 'tag_id', name=op.f('pk_transaction_tags'))
     )
     # ### end Alembic commands ###
 

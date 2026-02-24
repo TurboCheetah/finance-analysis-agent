@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -13,10 +12,7 @@ from finance_analysis_agent.provenance.types import (
     RunMetadataFinishRequest,
     RunMetadataStartRequest,
 )
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+from finance_analysis_agent.utils.time import utcnow
 
 
 def record_rule_audit(request: RuleAuditWriteRequest, session: Session) -> RuleAudit:
@@ -44,7 +40,7 @@ def start_run_metadata(request: RunMetadataStartRequest, session: Session) -> Ru
         code_version=request.code_version,
         schema_version=request.schema_version,
         config_hash=request.config_hash,
-        started_at=_utcnow(),
+        started_at=utcnow(),
         status=request.status,
         diagnostics_json=request.diagnostics_json,
     )
@@ -61,8 +57,7 @@ def finish_run_metadata(request: RunMetadataFinishRequest, session: Session) -> 
         raise ValueError(f"RunMetadata not found: {request.run_metadata_id}")
 
     run_metadata.status = request.status
-    run_metadata.completed_at = _utcnow()
+    run_metadata.completed_at = utcnow()
     run_metadata.diagnostics_json = request.diagnostics_json
     session.flush()
     return run_metadata
-
