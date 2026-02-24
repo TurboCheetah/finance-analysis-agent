@@ -4,6 +4,7 @@ from finance_analysis_agent.pdf_contract.adapter import (
     DeterministicFakePdfSubagentAdapter,
     PdfSubagentAdapter,
 )
+from finance_analysis_agent.pdf_extract.adapter import LayeredPdfSubagentAdapter
 from finance_analysis_agent.pdf_contract.orchestrator import (
     EXPECTED_CONTRACT_VERSION,
     ORCHESTRATOR_COMPONENT_VERSION,
@@ -30,6 +31,7 @@ from finance_analysis_agent.pdf_contract.validators import (
 __all__ = [
     "DeterministicFakePdfSubagentAdapter",
     "EXPECTED_CONTRACT_VERSION",
+    "LayeredPdfSubagentAdapter",
     "ORCHESTRATOR_COMPONENT_VERSION",
     "PdfContractError",
     "PdfDiagnostics",

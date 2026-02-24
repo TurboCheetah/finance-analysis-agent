@@ -416,6 +416,28 @@ Research anchors:
   - Multi-currency conversion via explicit FX tables.
   - Household sharing/permissions and guided onboarding/budget builder.
 
+### 10.1) Execution Status (Linear-aligned, updated February 24, 2026)
+- [x] TUR-31: Define canonical SQLite schema + initial Alembic baseline
+- [x] TUR-32: Implement ImportBatch idempotency + source fingerprinting
+- [x] TUR-33: Build immutable transaction event trail + provenance API
+- [x] TUR-34: Define PDF subagent contract + orchestrator handoff protocol
+- [x] TUR-35: Implement layered PDF extraction pipeline (heuristics -> table assist -> OCR fallback)
+- [ ] TUR-36: Create PDF fixture pack + confidence thresholds + review routing
+- [ ] TUR-37: Implement deterministic rules engine (ordered matchers/actions + dry-run)
+- [ ] TUR-38: Build Review Queue service with bulk triage workflows
+- [ ] TUR-39: Add explainable categorize_suggest service (optional heuristic/LLM-assisted)
+- [ ] TUR-40: Implement txn_dedupe_match hard/soft matching core
+- [ ] TUR-41: Add pending->posted linking + multi-source duplicate safeguards
+- [ ] TUR-42: Implement statement reconciliation checkpoints + trust score
+- [ ] TUR-43: Implement zero-based budgeting engine (`to_assign`, targets, underfunded/overspent)
+- [ ] TUR-44: Implement flex budgeting engine + rollover policies
+- [ ] TUR-45: Implement goal ledger + recurring schedule/missed-event warnings
+- [ ] TUR-46: Implement reporting_generate for core finance reports
+- [ ] TUR-47: Implement export_bundle + backup/restore round-trip
+- [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
+
+Next issue in strict sequence: TUR-36.
+
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
   - Mitigation: subagent specialization, layered heuristics, page-level diagnostics, mandatory review for low confidence.

@@ -1,0 +1,10 @@
+"""Error and warning taxonomy for layered PDF extraction."""
+
+DATE_PARSE = "date_parse"
+AMOUNT_PARSE = "amount_parse"
+LAYOUT_SHIFT = "layout_shift"
+OCR_LOW_CONFIDENCE = "ocr_low_confidence"
+TABLE_UNAVAILABLE = "table_unavailable"
+OCR_UNAVAILABLE = "ocr_unavailable"
+ROW_INCOMPLETE = "row_incomplete"
+TEXT_UNAVAILABLE = "text_unavailable"
