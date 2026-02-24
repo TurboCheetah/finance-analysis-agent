@@ -131,7 +131,7 @@ class Transaction(Base):
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     posted_date: Mapped[date] = mapped_column(Date, nullable=False)
     effective_date: Mapped[date | None] = mapped_column(Date)
-    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2, asdecimal=True), nullable=False)
     currency: Mapped[str] = mapped_column(String, nullable=False)
     original_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     original_currency: Mapped[str | None] = mapped_column(String)
