@@ -59,13 +59,16 @@ def test_alembic_upgrade_downgrade_smoke(tmp_path: Path) -> None:
 
     command.downgrade(config, "base")
 
-    with sqlite3.connect(database_file) as connection:
+    connection = sqlite3.connect(database_file)
+    try:
         tables = {
             row[0]
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )
         }
+    finally:
+        connection.close()
     assert tables <= {"alembic_version"}
 
     command.upgrade(config, "head")

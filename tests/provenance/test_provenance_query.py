@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -14,20 +14,17 @@ from finance_analysis_agent.provenance.types import (
     ProvenanceSource,
     TransactionMutationRequest,
 )
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+from finance_analysis_agent.utils.time import utcnow
 
 
 def _seed(session: Session) -> str:
     session.add(Account(id="acct-a", name="A", type="checking", currency="USD"))
     session.add_all(
         [
-            Category(id="cat-a", parent_id=None, name="A", system_flag=False, active=True, created_at=_utcnow()),
-            Category(id="cat-b", parent_id=None, name="B", system_flag=False, active=True, created_at=_utcnow()),
-            Merchant(id="mer-a", canonical_name="A", confidence=1.0, created_at=_utcnow()),
-            Merchant(id="mer-b", canonical_name="B", confidence=1.0, created_at=_utcnow()),
+            Category(id="cat-a", parent_id=None, name="A", system_flag=False, active=True, created_at=utcnow()),
+            Category(id="cat-b", parent_id=None, name="B", system_flag=False, active=True, created_at=utcnow()),
+            Merchant(id="mer-a", canonical_name="A", confidence=1.0, created_at=utcnow()),
+            Merchant(id="mer-b", canonical_name="B", confidence=1.0, created_at=utcnow()),
         ]
     )
     session.add(
@@ -50,8 +47,8 @@ def _seed(session: Session) -> str:
             source_transaction_id="p-1",
             import_batch_id=None,
             transfer_group_id=None,
-            created_at=_utcnow(),
-            updated_at=_utcnow(),
+            created_at=utcnow(),
+            updated_at=utcnow(),
         )
     )
     session.commit()
@@ -108,4 +105,3 @@ def test_get_transaction_provenance_returns_latest_source_by_field(db_session: S
     assert result.latest_by_field["amount"].source == ProvenanceSource.HEURISTIC
     assert result.latest_by_field["excluded"] is not None
     assert result.latest_by_field["excluded"].source == ProvenanceSource.HEURISTIC
-

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -13,10 +13,7 @@ from finance_analysis_agent.provenance.types import (
     ProvenanceSource,
     TransactionMutationRequest,
 )
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+from finance_analysis_agent.utils.time import utcnow
 
 
 def _seed_transaction_graph(session: Session) -> str:
@@ -30,10 +27,10 @@ def _seed_transaction_graph(session: Session) -> str:
     )
     session.add_all(
         [
-            Category(id="cat-old", parent_id=None, name="Old", system_flag=False, active=True, created_at=_utcnow()),
-            Category(id="cat-new", parent_id=None, name="New", system_flag=False, active=True, created_at=_utcnow()),
-            Merchant(id="mer-old", canonical_name="Old Merchant", confidence=0.9, created_at=_utcnow()),
-            Merchant(id="mer-new", canonical_name="New Merchant", confidence=0.9, created_at=_utcnow()),
+            Category(id="cat-old", parent_id=None, name="Old", system_flag=False, active=True, created_at=utcnow()),
+            Category(id="cat-new", parent_id=None, name="New", system_flag=False, active=True, created_at=utcnow()),
+            Merchant(id="mer-old", canonical_name="Old Merchant", confidence=0.9, created_at=utcnow()),
+            Merchant(id="mer-new", canonical_name="New Merchant", confidence=0.9, created_at=utcnow()),
         ]
     )
     session.add(
@@ -56,8 +53,8 @@ def _seed_transaction_graph(session: Session) -> str:
             source_transaction_id="seed-1",
             import_batch_id=None,
             transfer_group_id=None,
-            created_at=_utcnow(),
-            updated_at=_utcnow(),
+            created_at=utcnow(),
+            updated_at=utcnow(),
         )
     )
     session.commit()
@@ -199,4 +196,3 @@ def test_validation_rejects_missing_reason_invalid_provenance_and_unsupported_fi
             ),
             db_session,
         )
-

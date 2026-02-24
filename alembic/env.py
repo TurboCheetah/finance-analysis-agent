@@ -61,7 +61,11 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    configured_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    configured_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    if not configured_url:
+        raise RuntimeError(
+            "Database URL is not configured. Set DATABASE_URL or sqlalchemy.url in alembic.ini."
+        )
     config.set_main_option("sqlalchemy.url", configured_url)
 
     connectable = engine_from_config(

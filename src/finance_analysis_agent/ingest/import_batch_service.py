@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -109,6 +110,7 @@ def _record_status_event(
     reason: str | None,
     actor: str,
     session: Session,
+    changed_at: datetime | None = None,
 ) -> None:
     session.add(
         ImportBatchStatusEvent(
@@ -118,7 +120,7 @@ def _record_status_event(
             to_status=to_status.value,
             reason=reason,
             actor=actor,
-            changed_at=utcnow(),
+            changed_at=changed_at or utcnow(),
         )
     )
 
@@ -140,9 +142,10 @@ def transition_import_batch_status(
     if not _is_valid_transition(from_status, to_status):
         raise ValueError(f"Invalid ImportBatch transition: {from_status.value} -> {to_status.value}")
 
+    event_timestamp = utcnow()
     batch.status = to_status.value
     if to_status == ImportBatchStatus.FINALIZED:
-        batch.finalized_at = utcnow()
+        batch.finalized_at = event_timestamp
     if to_status == ImportBatchStatus.FAILED and reason:
         batch.error_summary = reason
 
@@ -153,6 +156,7 @@ def transition_import_batch_status(
         reason=reason,
         actor=actor,
         session=session,
+        changed_at=event_timestamp,
     )
 
 
