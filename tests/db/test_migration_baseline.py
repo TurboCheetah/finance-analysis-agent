@@ -85,91 +85,94 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
     command.upgrade(config, "head")
 
     engine = sa.create_engine(database_url)
-    inspector = sa.inspect(engine)
+    try:
+        inspector = sa.inspect(engine)
 
-    expected_tables = {
-        "accounts",
-        "statements",
-        "import_batches",
-        "import_batch_status_events",
-        "raw_transactions",
-        "transactions",
-        "transaction_events",
-        "merchants",
-        "merchant_aliases",
-        "categories",
-        "tags",
-        "transaction_tags",
-        "transaction_splits",
-        "rules",
-        "rule_runs",
-        "rule_audits",
-        "dedupe_candidates",
-        "review_items",
-        "balance_snapshots",
-        "reconciliations",
-        "budgets",
-        "budget_periods",
-        "budget_categories",
-        "budget_targets",
-        "budget_allocations",
-        "budget_buckets",
-        "budget_rollovers",
-        "recurrings",
-        "recurring_events",
-        "goals",
-        "goal_allocations",
-        "goal_events",
-        "reports",
-        "run_metadata",
-    }
-    assert expected_tables.issubset(set(inspector.get_table_names()))
+        expected_tables = {
+            "accounts",
+            "statements",
+            "import_batches",
+            "import_batch_status_events",
+            "raw_transactions",
+            "transactions",
+            "transaction_events",
+            "merchants",
+            "merchant_aliases",
+            "categories",
+            "tags",
+            "transaction_tags",
+            "transaction_splits",
+            "rules",
+            "rule_runs",
+            "rule_audits",
+            "dedupe_candidates",
+            "review_items",
+            "balance_snapshots",
+            "reconciliations",
+            "budgets",
+            "budget_periods",
+            "budget_categories",
+            "budget_targets",
+            "budget_allocations",
+            "budget_buckets",
+            "budget_rollovers",
+            "recurrings",
+            "recurring_events",
+            "goals",
+            "goal_allocations",
+            "goal_events",
+            "reports",
+            "run_metadata",
+        }
+        assert expected_tables.issubset(set(inspector.get_table_names()))
 
-    _assert_expected_indexes(inspector)
+        _assert_expected_indexes(inspector)
 
-    statements_uniques = inspector.get_unique_constraints("statements")
-    assert ("source_fingerprint",) in {
-        tuple(item["column_names"]) for item in statements_uniques
-    }
+        statements_uniques = inspector.get_unique_constraints("statements")
+        assert ("source_fingerprint",) in {
+            tuple(item["column_names"]) for item in statements_uniques
+        }
 
-    import_batch_uniques = inspector.get_unique_constraints("import_batches")
-    assert ("source_fingerprint", "source_type") not in {
-        tuple(item["column_names"]) for item in import_batch_uniques
-    }
+        import_batch_uniques = inspector.get_unique_constraints("import_batches")
+        assert ("source_fingerprint", "source_type") not in {
+            tuple(item["column_names"]) for item in import_batch_uniques
+        }
 
-    balance_snapshot_uniques = inspector.get_unique_constraints("balance_snapshots")
-    assert ("account_id", "snapshot_date", "source") in {
-        tuple(item["column_names"]) for item in balance_snapshot_uniques
-    }
+        balance_snapshot_uniques = inspector.get_unique_constraints("balance_snapshots")
+        assert ("account_id", "snapshot_date", "source") in {
+            tuple(item["column_names"]) for item in balance_snapshot_uniques
+        }
 
-    budget_period_uniques = inspector.get_unique_constraints("budget_periods")
-    assert ("budget_id", "period_month") in {
-        tuple(item["column_names"]) for item in budget_period_uniques
-    }
+        budget_period_uniques = inspector.get_unique_constraints("budget_periods")
+        assert ("budget_id", "period_month") in {
+            tuple(item["column_names"]) for item in budget_period_uniques
+        }
 
-    import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
-    assert {
-        "fingerprint_algo",
-        "conflict_mode",
-        "override_reason",
-        "override_of_batch_id",
-    }.issubset(import_batch_columns)
+        import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
+        assert {
+            "fingerprint_algo",
+            "conflict_mode",
+            "override_reason",
+            "override_of_batch_id",
+        }.issubset(import_batch_columns)
 
-    with engine.connect() as connection:
-        partial_index_sql = connection.execute(
-            sa.text(
-                "SELECT sql FROM sqlite_master "
-                "WHERE type = 'index' "
-                "AND name = 'ux_transactions_account_source_kind_source_transaction_id_not_null'"
-            )
-        ).scalar_one()
-        root_category_index_sql = connection.execute(
-            sa.text(
-                "SELECT sql FROM sqlite_master "
-                "WHERE type = 'index' "
-                "AND name = 'ux_categories_root_name_parent_null'"
-            )
-        ).scalar_one()
+        with engine.connect() as connection:
+            partial_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_transactions_account_source_kind_source_transaction_id_not_null'"
+                )
+            ).scalar_one()
+            root_category_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_categories_root_name_parent_null'"
+                )
+            ).scalar_one()
 
-    assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
-    assert "WHERE parent_id IS NULL" in root_category_index_sql
+        assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
+        assert "WHERE parent_id IS NULL" in root_category_index_sql
+    finally:
+        engine.dispose()
