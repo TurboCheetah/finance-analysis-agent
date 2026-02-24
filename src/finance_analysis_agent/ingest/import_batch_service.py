@@ -231,7 +231,11 @@ def ingest_transactions(request: IngestRequest, session: Session) -> IngestResul
                 RawTransaction(
                     id=str(uuid4()),
                     import_batch_id=batch.id,
-                    raw_payload_json=txn.raw_payload or _canonical_raw_payload(txn, index),
+                    raw_payload_json=(
+                        txn.raw_payload
+                        if txn.raw_payload is not None
+                        else _canonical_raw_payload(txn, index)
+                    ),
                     page_no=txn.page_no,
                     row_no=txn.row_no or index,
                     extraction_confidence=txn.extraction_confidence,

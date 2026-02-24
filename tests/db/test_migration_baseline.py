@@ -22,6 +22,7 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("to_status", "changed_at"),
         },
         "raw_transactions": {("import_batch_id",), ("parse_status",)},
+        "categories": {("name",)},
         "transactions": {
             ("account_id", "posted_date"),
             ("merchant_id",),
@@ -162,5 +163,13 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
                 "AND name = 'ux_transactions_account_source_kind_source_transaction_id_not_null'"
             )
         ).scalar_one()
+        root_category_index_sql = connection.execute(
+            sa.text(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'index' "
+                "AND name = 'ux_categories_root_name_parent_null'"
+            )
+        ).scalar_one()
 
     assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
+    assert "WHERE parent_id IS NULL" in root_category_index_sql

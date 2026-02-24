@@ -193,7 +193,15 @@ class MerchantAlias(Base):
 
 class Category(Base):
     __tablename__ = "categories"
-    __table_args__ = (UniqueConstraint("parent_id", "name", name="uq_categories_parent_id_name"),)
+    __table_args__ = (
+        UniqueConstraint("parent_id", "name", name="uq_categories_parent_id_name"),
+        Index(
+            "ux_categories_root_name_parent_null",
+            "name",
+            unique=True,
+            sqlite_where=text("parent_id IS NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"))
