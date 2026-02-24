@@ -191,7 +191,8 @@ def _row_to_canonical(
 
 
 def _row_passes_threshold(row: PdfExtractedRow, threshold: float) -> bool:
-    confidence = 1.0 if row.confidence is None else float(row.confidence)
+    # Treat missing confidence as unknown/low confidence so thresholding is conservative.
+    confidence = 0.0 if row.confidence is None else float(row.confidence)
     return confidence >= threshold
 
 

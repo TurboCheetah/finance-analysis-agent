@@ -223,6 +223,42 @@ def test_partial_rows_ingest_valid_rows_and_mark_warnings(db_session: Session, t
     assert run_metadata.diagnostics_json["row_summary"]["skipped_rows"] == 2
 
 
+def test_rows_with_missing_confidence_are_skipped_by_threshold(
+    db_session: Session, tmp_path: Path
+) -> None:
+    _seed_account(db_session)
+    statement = tmp_path / "statement.pdf"
+    statement.write_bytes(b"fake-pdf-content")
+
+    adapter = DeterministicFakePdfSubagentAdapter(
+        response=_response(
+            [
+                PdfExtractedRow(
+                    account_id="acct-pdf",
+                    posted_date=date(2026, 5, 4),
+                    amount=Decimal("-9.99"),
+                    currency="USD",
+                    pending_status="posted",
+                    confidence=None,
+                    parse_status="parsed",
+                    row_no=1,
+                    page_no=1,
+                    source_transaction_id="missing-conf-1",
+                ),
+            ]
+        )
+    )
+
+    result = run_pdf_subagent_handoff(_request(statement), adapter, db_session)
+    db_session.commit()
+
+    assert result.ok is True
+    assert result.status == "success_with_warnings"
+    assert result.inserted_rows == 0
+    assert result.skipped_rows == 1
+    assert any("confidence threshold" in warning.message for warning in result.warnings)
+
+
 def test_adapter_exception_returns_structured_failure(db_session: Session, tmp_path: Path) -> None:
     _seed_account(db_session)
     statement = tmp_path / "statement.pdf"
