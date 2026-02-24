@@ -94,7 +94,7 @@ def test_get_transaction_provenance_returns_latest_source_by_field(db_session: S
 
     assert result.current_values["category_id"] == "cat-a"
     assert result.current_values["merchant_id"] == "mer-b"
-    assert result.current_values["amount"] == "19.50"
+    assert Decimal(result.current_values["amount"]) == Decimal("19.50")
     assert result.current_values["excluded"] is True
 
     assert result.latest_by_field["category_id"] is not None

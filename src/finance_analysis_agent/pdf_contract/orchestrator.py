@@ -325,14 +325,15 @@ def run_pdf_subagent_handoff(
     skipped_rows = 0
     row_diagnostics: list[dict[str, Any]] = []
     for idx, row in enumerate(response.rows, start=1):
-        if row.parse_status != "parsed":
+        normalized_status = (row.parse_status or "").strip()
+        if normalized_status != "parsed":
             skipped_rows += 1
             warnings.append(
                 _error(
                     code="response_invalid",
                     message="row skipped due to parse_status",
                     stage="row_filter",
-                    details={"row_index": idx, "parse_status": row.parse_status},
+                    details={"row_index": idx, "parse_status": normalized_status},
                 )
             )
             row_diagnostics.append(
@@ -340,7 +341,7 @@ def run_pdf_subagent_handoff(
                     "row_index": idx,
                     "ingested": False,
                     "reason": "parse_status",
-                    "parse_status": row.parse_status,
+                    "parse_status": normalized_status,
                 }
             )
             continue

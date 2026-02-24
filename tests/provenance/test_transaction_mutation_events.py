@@ -111,6 +111,7 @@ def test_multi_field_mutation_emits_one_event_per_changed_field(db_session: Sess
     )
     db_session.commit()
 
+    assert result.noop is False
     assert set(result.changed_fields) == {"merchant_id", "amount", "excluded"}
     assert len(result.event_ids) == 3
 
