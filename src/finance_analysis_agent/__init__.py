@@ -1,5 +1,14 @@
 """Finance Analysis Agent package."""
 
+from finance_analysis_agent.categorize import (
+    CategorizeSuggestRequest,
+    CategorizeSuggestResult,
+    SuggestionCandidate,
+    SuggestionMetricsRequest,
+    SuggestionMetricsResult,
+    categorize_suggest,
+    get_suggestion_metrics,
+)
 from finance_analysis_agent.rules import (
     RuleApplyResult,
     RuleDiff,
@@ -22,6 +31,8 @@ from finance_analysis_agent.review_queue import (
 )
 
 __all__ = [
+    "CategorizeSuggestRequest",
+    "CategorizeSuggestResult",
     "RuleApplyResult",
     "RuleDiff",
     "RuleRunMode",
@@ -35,7 +46,12 @@ __all__ = [
     "ReviewQueueListRequest",
     "ReviewQueueListResult",
     "ReviewSource",
+    "SuggestionCandidate",
+    "SuggestionMetricsRequest",
+    "SuggestionMetricsResult",
     "apply_rules",
     "bulk_triage",
+    "categorize_suggest",
+    "get_suggestion_metrics",
     "list_review_items",
 ]
