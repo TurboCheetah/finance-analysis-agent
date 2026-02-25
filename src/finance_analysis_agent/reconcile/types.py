@@ -16,7 +16,7 @@ class ReconciliationTrustWeights:
 
 @dataclass(slots=True)
 class ReconciliationThresholds:
-    delta_tolerance: Decimal | str = "0.01"
+    delta_tolerance: Decimal = field(default_factory=lambda: Decimal("0.01"))
     pass_threshold: float = 0.90
 
 
@@ -71,7 +71,7 @@ class ApproveReconciliationAdjustmentRequest:
     reconciliation_id: str
     actor: str
     reason: str
-    delta_tolerance: Decimal | str = "0.01"
+    delta_tolerance: Decimal = field(default_factory=lambda: Decimal("0.01"))
 
 
 @dataclass(slots=True)

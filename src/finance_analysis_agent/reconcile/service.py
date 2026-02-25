@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
@@ -138,6 +138,7 @@ def _txn_scope_clause(
 def _resolve_statement(
     request: AccountReconcileRequest,
     *,
+    account_id: str,
     session: Session,
 ) -> Statement:
     if request.statement_id is not None:
@@ -148,7 +149,7 @@ def _resolve_statement(
         statement = session.scalar(
             select(Statement)
             .where(
-                Statement.account_id == request.account_id,
+                Statement.account_id == account_id,
                 Statement.period_start == request.period_start,
                 Statement.period_end == request.period_end,
             )
@@ -158,10 +159,10 @@ def _resolve_statement(
         if statement is None:
             raise ValueError(
                 "Statement not found for account and period "
-                f"{request.account_id}: {request.period_start}..{request.period_end}"
+                f"{account_id}: {request.period_start}..{request.period_end}"
             )
 
-    if statement.account_id != request.account_id:
+    if statement.account_id != account_id:
         raise ValueError("statement_id does not belong to account_id")
     if statement.period_start != request.period_start or statement.period_end != request.period_end:
         raise ValueError("statement period does not match reconcile request period")
@@ -200,7 +201,7 @@ def _upsert_balance_snapshot(
     balance: Decimal,
     source: str,
     statement_id: str | None,
-    event_time,
+    event_time: datetime,
     session: Session,
 ) -> None:
     existing = session.scalar(
@@ -362,16 +363,8 @@ def account_reconcile(
     weights = _parse_weights(request.weights)
 
     statement = _resolve_statement(
-        AccountReconcileRequest(
-            account_id=account_id,
-            period_start=request.period_start,
-            period_end=request.period_end,
-            actor=actor,
-            reason=reason,
-            statement_id=request.statement_id,
-            thresholds=request.thresholds,
-            weights=request.weights,
-        ),
+        request,
+        account_id=account_id,
         session=session,
     )
     expected_balance = Decimal(statement.ending_balance)
@@ -388,10 +381,10 @@ def account_reconcile(
         period_end=request.period_end,
     )
     ledger_movement = Decimal(
-        session.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(transaction_scope)) or 0
+        session.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(transaction_scope))
     )
     transaction_count = int(
-        session.scalar(select(func.count()).select_from(Transaction).where(transaction_scope)) or 0
+        session.scalar(select(func.count()).select_from(Transaction).where(transaction_scope))
     )
     computed_balance = opening_balance + ledger_movement
     delta = expected_balance - computed_balance
@@ -437,7 +430,7 @@ def account_reconcile(
     )
 
     adjustment_proposal: ReconciliationAdjustmentProposal | None = None
-    if adjustment_magnitude > 0:
+    if delta_abs > thresholds.delta_tolerance:
         adjustment_proposal = ReconciliationAdjustmentProposal(
             amount=delta,
             currency=account.currency,

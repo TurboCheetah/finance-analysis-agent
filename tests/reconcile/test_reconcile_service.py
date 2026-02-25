@@ -192,6 +192,39 @@ def test_account_reconcile_passes_and_persists_checkpoints(db_session: Session) 
     assert {snapshot.source for snapshot in snapshots} == {"statement", "reconciliation"}
 
 
+def test_account_reconcile_no_adjustment_proposal_within_tolerance(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_statement(
+        db_session,
+        statement_id="stmt-tolerance",
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 31),
+        ending_balance=Decimal("100.01"),
+    )
+    _seed_balance_snapshot(
+        db_session,
+        snapshot_id="snap-open-tolerance",
+        snapshot_date=date(2026, 1, 1),
+        balance=Decimal("100.00"),
+    )
+    db_session.flush()
+
+    result = account_reconcile(
+        AccountReconcileRequest(
+            account_id="acct-1",
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 31),
+            actor="reconciler",
+            reason="within tolerance",
+        ),
+        db_session,
+    )
+
+    assert result.status == "pass"
+    assert result.delta == Decimal("0.01")
+    assert result.adjustment_proposal is None
+
+
 def test_account_reconcile_fails_with_unresolved_items_and_delta(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_statement(
