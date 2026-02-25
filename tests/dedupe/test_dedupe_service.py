@@ -360,6 +360,46 @@ def test_pending_posted_pair_outside_window_is_not_candidate(db_session: Session
     assert result.candidates == []
 
 
+@pytest.mark.parametrize(
+    "pending_amount_tolerance_pct",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+    ids=["nan", "inf", "neg_inf"],
+)
+def test_pending_amount_tolerance_pct_rejects_non_finite_values(
+    db_session: Session,
+    pending_amount_tolerance_pct: float,
+) -> None:
+    with pytest.raises(ValueError, match="pending_amount_tolerance_pct"):
+        txn_dedupe_match(
+            TxnDedupeMatchRequest(
+                actor="tester",
+                reason="reject non-finite pending pct tolerance",
+                pending_amount_tolerance_pct=pending_amount_tolerance_pct,
+            ),
+            db_session,
+        )
+
+
+@pytest.mark.parametrize("pending_amount_tolerance_abs", ["NaN", "Infinity", "-Infinity"])
+def test_pending_amount_tolerance_abs_rejects_non_finite_values(
+    db_session: Session,
+    pending_amount_tolerance_abs: str,
+) -> None:
+    with pytest.raises(ValueError, match="pending_amount_tolerance_abs"):
+        txn_dedupe_match(
+            TxnDedupeMatchRequest(
+                actor="tester",
+                reason="reject non-finite pending absolute tolerance",
+                pending_amount_tolerance_abs=pending_amount_tolerance_abs,
+            ),
+            db_session,
+        )
+
+
 def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
@@ -407,6 +447,83 @@ def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: 
     assert candidate.decision is None
     assert candidate.queued_review_item_id is not None
     assert candidate.policy_flags["cross_source_review_only_applied"] is True
+
+
+def test_cross_source_review_only_clears_existing_duplicate_decision(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-cross-existing-a",
+        posted_date=date(2026, 1, 5),
+        amount="20.00",
+        original_statement="STREAMING SERVICE",
+        pending_status="posted",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-cross-existing-b",
+        posted_date=date(2026, 1, 6),
+        amount="20.00",
+        original_statement="streaming service",
+        pending_status="posted",
+        source_kind="pdf",
+    )
+    db_session.add(
+        DedupeCandidate(
+            id="dc-cross-existing",
+            txn_a_id="txn-cross-existing-a",
+            txn_b_id="txn-cross-existing-b",
+            score=1.0,
+            decision="duplicate",
+            reason_json={"seed": True},
+            created_at=utcnow(),
+            decided_at=utcnow(),
+        )
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="enforce cross-source review-only on existing duplicate",
+            scope_transaction_ids=["txn-cross-existing-a", "txn-cross-existing-b"],
+            cross_source_review_only=True,
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    assert result.hard_auto_linked == 0
+    assert result.soft_auto_linked == 0
+    assert result.soft_queued == 1
+    assert len(result.candidates) == 1
+    assert result.candidates[0].decision is None
+    assert result.candidates[0].queued_review_item_id is not None
+
+    candidate = db_session.get(DedupeCandidate, "dc-cross-existing")
+    assert candidate is not None
+    assert candidate.decision is None
+    assert candidate.decided_at is None
+
+    review_item = db_session.scalar(
+        select(ReviewItem).where(
+            ReviewItem.source == ReviewSource.DEDUPE.value,
+            ReviewItem.ref_id == "dc-cross-existing",
+        )
+    )
+    assert review_item is not None
+    assert review_item.reason_code == "dedupe.cross_source_review_only"
+
+    decision_change_event = db_session.scalar(
+        select(DedupeCandidateEvent).where(
+            DedupeCandidateEvent.dedupe_candidate_id == "dc-cross-existing",
+            DedupeCandidateEvent.event_type == "dedupe_candidate.decision_changed",
+        )
+    )
+    assert decision_change_event is not None
+    assert decision_change_event.old_value_json == {"decision": "duplicate"}
+    assert decision_change_event.new_value_json == {"decision": None}
 
 
 def test_cross_source_soft_match_above_threshold_stays_review_only(db_session: Session) -> None:

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
-from sqlalchemy import and_, case, or_, select
+from sqlalchemy import and_, case, null, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -158,6 +159,8 @@ def _parse_non_negative_decimal(value: object, *, field_name: str) -> Decimal:
         parsed = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise _DedupeValidationError(_ERR_DECIMAL_COMPAT.format(field_name=field_name)) from exc
+    if not parsed.is_finite():
+        raise _DedupeValidationError(_ERR_DECIMAL_COMPAT.format(field_name=field_name))
     if parsed < 0:
         raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name=field_name))
     return parsed
@@ -180,9 +183,9 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
 
     soft_review_threshold = float(request.soft_review_threshold)
     soft_autolink_threshold = float(request.soft_autolink_threshold)
-    if soft_review_threshold < 0 or soft_review_threshold > 1:
+    if not math.isfinite(soft_review_threshold) or soft_review_threshold < 0 or soft_review_threshold > 1:
         raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="soft_review_threshold"))
-    if soft_autolink_threshold < 0 or soft_autolink_threshold > 1:
+    if not math.isfinite(soft_autolink_threshold) or soft_autolink_threshold < 0 or soft_autolink_threshold > 1:
         raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="soft_autolink_threshold"))
     if soft_review_threshold > soft_autolink_threshold:
         raise _DedupeValidationError(_ERR_REVIEW_THRESHOLD_ORDER)
@@ -192,7 +195,11 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
         raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="pending_posted_window_days"))
 
     pending_amount_tolerance_pct = float(request.pending_amount_tolerance_pct)
-    if pending_amount_tolerance_pct < 0 or pending_amount_tolerance_pct > 1:
+    if (
+        not math.isfinite(pending_amount_tolerance_pct)
+        or pending_amount_tolerance_pct < 0
+        or pending_amount_tolerance_pct > 1
+    ):
         raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="pending_amount_tolerance_pct"))
 
     pending_amount_tolerance_abs = _parse_non_negative_decimal(
@@ -444,6 +451,7 @@ def _upsert_candidate(
     score: float,
     decision: str | None,
     reason_json: dict[str, object],
+    clear_decision_when_none: bool,
     session: Session,
 ) -> tuple[DedupeCandidate, bool]:
     now = utcnow()
@@ -460,21 +468,35 @@ def _upsert_candidate(
         decided_at=decided_at,
     )
     incoming_decision = insert_stmt.excluded.decision
-    decision_update_expr = case(
-        (incoming_decision.is_(None), DedupeCandidate.decision),
-        else_=incoming_decision,
-    )
-    decided_at_update_expr = case(
-        (incoming_decision.is_(None), DedupeCandidate.decided_at),
-        (
-            or_(
-                DedupeCandidate.decision.is_distinct_from(incoming_decision),
-                DedupeCandidate.decided_at.is_(None),
+    if clear_decision_when_none:
+        decision_update_expr = incoming_decision
+        decided_at_update_expr = case(
+            (incoming_decision.is_(None), null()),
+            (
+                or_(
+                    DedupeCandidate.decision.is_distinct_from(incoming_decision),
+                    DedupeCandidate.decided_at.is_(None),
+                ),
+                now,
             ),
-            now,
-        ),
-        else_=DedupeCandidate.decided_at,
-    )
+            else_=DedupeCandidate.decided_at,
+        )
+    else:
+        decision_update_expr = case(
+            (incoming_decision.is_(None), DedupeCandidate.decision),
+            else_=incoming_decision,
+        )
+        decided_at_update_expr = case(
+            (incoming_decision.is_(None), DedupeCandidate.decided_at),
+            (
+                or_(
+                    DedupeCandidate.decision.is_distinct_from(incoming_decision),
+                    DedupeCandidate.decided_at.is_(None),
+                ),
+                now,
+            ),
+            else_=DedupeCandidate.decided_at,
+        )
     update_conditions = [
         DedupeCandidate.score != insert_stmt.excluded.score,
         DedupeCandidate.reason_json != insert_stmt.excluded.reason_json,
@@ -487,6 +509,16 @@ def _upsert_candidate(
             DedupeCandidate.decided_at.is_(None),
         ),
     ]
+    if clear_decision_when_none:
+        update_conditions.append(
+            and_(
+                incoming_decision.is_(None),
+                or_(
+                    DedupeCandidate.decision.is_not(None),
+                    DedupeCandidate.decided_at.is_not(None),
+                ),
+            )
+        )
 
     upsert_stmt = (
         insert_stmt.on_conflict_do_update(
@@ -906,6 +938,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 score=score,
                 decision=decision,
                 reason_json=reason_json,
+                clear_decision_when_none=cross_source_review_only_applied,
                 session=session,
             )
             if was_unchanged:
