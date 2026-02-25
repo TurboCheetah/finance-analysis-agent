@@ -71,6 +71,27 @@ def test_request_threshold_is_used_when_no_config_match() -> None:
     assert policy.source == "request.confidence_threshold"
 
 
+def test_non_string_issuer_metadata_does_not_crash_and_is_ignored() -> None:
+    request = _request(metadata={"issuer": 42})
+    request.confidence_threshold = 0.73
+
+    policy = resolve_pdf_threshold_policy(request)
+
+    assert policy.row_confidence_threshold == 0.73
+    assert policy.source == "request.confidence_threshold"
+
+
+def test_page_override_preserves_mixed_source_provenance_when_row_uses_request_fallback() -> None:
+    request = _request(metadata={"page_confidence_threshold_override": 0.61})
+    request.confidence_threshold = 0.74
+
+    policy = resolve_pdf_threshold_policy(request)
+
+    assert policy.row_confidence_threshold == 0.74
+    assert policy.page_confidence_threshold == 0.61
+    assert policy.source == "request.confidence_threshold+request.metadata.page_confidence_threshold_override"
+
+
 def test_quality_floors_default_to_global_values() -> None:
     floors = resolve_quality_floors()
 

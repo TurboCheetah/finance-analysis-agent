@@ -40,8 +40,8 @@ def _default_config_path() -> Path:
     return Path(__file__).resolve().parent / "config" / "confidence_thresholds.json"
 
 
-def _normalize_key(value: str | None) -> str | None:
-    if value is None:
+def _normalize_key(value: Any) -> str | None:
+    if not isinstance(value, str):
         return None
     normalized = value.strip().lower()
     return normalized if normalized else None
@@ -175,7 +175,10 @@ def resolve_pdf_threshold_policy(request: PdfSubagentRequest) -> PdfThresholdPol
 
     if row_override is None and template_payload is None and issuer_payload is None:
         row_threshold = request.confidence_threshold
-        source = "request.confidence_threshold"
+        if page_override is None:
+            source = "request.confidence_threshold"
+        else:
+            source = "request.confidence_threshold+request.metadata.page_confidence_threshold_override"
 
     return PdfThresholdPolicy(
         row_confidence_threshold=row_threshold,

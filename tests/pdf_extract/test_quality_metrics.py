@@ -59,3 +59,10 @@ def test_precision_is_zero_when_no_predictions_exist() -> None:
 
     assert metrics.precision == 0.0
     assert metrics.recall == 0.0
+
+
+def test_vacuous_recall_when_predictions_and_expected_are_empty() -> None:
+    metrics = evaluate_row_precision_recall(rows=[], expected_rows=[])
+
+    assert metrics.precision == 0.0
+    assert metrics.recall == 1.0
