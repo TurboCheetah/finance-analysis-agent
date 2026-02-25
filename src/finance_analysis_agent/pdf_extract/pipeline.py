@@ -44,10 +44,8 @@ def _row_key(row: PdfExtractedRow) -> tuple[Any, ...]:
         )
     return (
         "error",
-        row.error_code,
         row.original_statement,
         row.page_no,
-        row.row_no,
     )
 
 
@@ -98,6 +96,8 @@ def _normalize_page_notes(notes: list[dict[str, object]], tier: PdfExtractionTie
 
 
 def _warnings_to_error_counts(rows: list[PdfExtractedRow], warnings: list[str]) -> dict[str, int]:
+    """Summarize error codes from rows and warnings of shape '<code>: <detail>'."""
+
     counts: Counter[str] = Counter()
     for row in rows:
         if row.error_code:
@@ -105,7 +105,9 @@ def _warnings_to_error_counts(rows: list[PdfExtractedRow], warnings: list[str]) 
     for warning in warnings:
         if ":" in warning:
             code, _ = warning.split(":", 1)
-            counts[code.strip()] += 1
+            normalized = code.strip()
+            if normalized and ":" not in normalized:
+                counts[normalized] += 1
     return dict(counts)
 
 
@@ -158,10 +160,10 @@ def run_layered_extraction(
             overall_confidence = _overall_confidence(rows)
 
     ocr_mode = request.ocr_mode.value if hasattr(request.ocr_mode, "value") else str(request.ocr_mode)
-    if overall_confidence < request.confidence_threshold and ocr_mode in {
-        PdfOcrMode.AUTO.value,
-        PdfOcrMode.FORCE.value,
-    }:
+    should_ocr = ocr_mode == PdfOcrMode.FORCE.value or (
+        ocr_mode == PdfOcrMode.AUTO.value and overall_confidence < request.confidence_threshold
+    )
+    if should_ocr:
         ocr_invoked = True
         extraction_tiers_used.append(PdfExtractionTier.OCR_FALLBACK)
         ocr_result = ocr_engine.extract_text_pages(request)

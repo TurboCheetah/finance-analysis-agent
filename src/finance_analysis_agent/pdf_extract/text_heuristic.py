@@ -14,7 +14,7 @@ from finance_analysis_agent.pdf_extract import taxonomy
 from finance_analysis_agent.pdf_extract.profiles import TemplateProfile
 
 _DATE_PREFIX_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}/\d{2})\b")
-_AMOUNT_SUFFIX_RE = re.compile(r"(?P<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)\s*$")
+_AMOUNT_SUFFIX_RE = re.compile(r"(?P<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?-?)\s*$")
 
 
 @dataclass(slots=True)
@@ -67,24 +67,30 @@ def load_statement_text_pages(request: PdfSubagentRequest) -> tuple[list[str], l
 
 
 def _parse_date(date_token: str, year_hint: int | None) -> tuple[date | None, str | None]:
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_token):
-        return date.fromisoformat(date_token), None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_token):
+            return date.fromisoformat(date_token), None
 
-    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", date_token):
-        month, day, year = date_token.split("/")
-        return date(int(year), int(month), int(day)), None
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", date_token):
+            month, day, year = date_token.split("/")
+            return date(int(year), int(month), int(day)), None
 
-    if re.fullmatch(r"\d{2}/\d{2}", date_token):
-        if year_hint is None:
-            return None, taxonomy.DATE_PARSE
-        month, day = date_token.split("/")
-        return date(year_hint, int(month), int(day)), None
+        if re.fullmatch(r"\d{2}/\d{2}", date_token):
+            if year_hint is None:
+                return None, taxonomy.DATE_PARSE
+            month, day = date_token.split("/")
+            return date(year_hint, int(month), int(day)), None
+    except ValueError:
+        return None, taxonomy.DATE_PARSE
 
     return None, taxonomy.DATE_PARSE
 
 
 def _parse_amount(amount_token: str) -> tuple[Decimal | None, str | None]:
     normalized = amount_token.replace("$", "").replace(",", "").strip()
+    has_trailing_minus = normalized.endswith("-")
+    if has_trailing_minus:
+        normalized = normalized[:-1].strip()
     is_parenthesized = normalized.startswith("(") and normalized.endswith(")")
     if is_parenthesized:
         normalized = normalized[1:-1]
@@ -97,7 +103,7 @@ def _parse_amount(amount_token: str) -> tuple[Decimal | None, str | None]:
     except InvalidOperation:
         return None, taxonomy.AMOUNT_PARSE
 
-    if is_parenthesized and amount > 0:
+    if (is_parenthesized or has_trailing_minus) and amount > 0:
         amount = -amount
     return amount, None
 
@@ -122,7 +128,7 @@ def _is_candidate_transaction_line(line: str) -> bool:
         return False
     has_date_prefix = _DATE_PREFIX_RE.search(line) is not None
     has_amount_suffix = _AMOUNT_SUFFIX_RE.search(line) is not None
-    return has_date_prefix or has_amount_suffix
+    return has_date_prefix and has_amount_suffix
 
 
 def parse_statement_pages(
@@ -139,7 +145,14 @@ def parse_statement_pages(
     rows: list[PdfExtractedRow] = []
 
     year_hint_raw = request.metadata.get("statement_year") if request.metadata else None
-    year_hint = int(year_hint_raw) if isinstance(year_hint_raw, int) else None
+    year_hint: int | None = None
+    if isinstance(year_hint_raw, int) and not isinstance(year_hint_raw, bool):
+        year_hint = year_hint_raw
+    elif isinstance(year_hint_raw, str) and year_hint_raw.strip():
+        try:
+            year_hint = int(year_hint_raw.strip())
+        except ValueError:
+            year_hint = None
     currency_hint_raw = request.metadata.get("currency") if request.metadata else None
     currency_hint = currency_hint_raw if isinstance(currency_hint_raw, str) else profile.default_currency
 

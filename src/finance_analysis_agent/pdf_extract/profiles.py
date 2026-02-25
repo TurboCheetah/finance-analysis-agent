@@ -16,7 +16,8 @@ class TemplateProfileRegistry:
     """Resolve template hints to parsing profiles."""
 
     def __init__(self, profiles: dict[str, TemplateProfile] | None = None) -> None:
-        self._profiles = profiles or {"generic": TemplateProfile(name="generic")}
+        self._profiles = dict(profiles) if profiles is not None else {}
+        self._profiles.setdefault("generic", TemplateProfile(name="generic"))
 
     def resolve(self, template_hint: str | None) -> TemplateProfile:
         if not template_hint:
