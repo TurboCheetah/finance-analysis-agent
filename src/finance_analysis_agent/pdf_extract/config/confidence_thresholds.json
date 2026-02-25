@@ -25,11 +25,9 @@
       "page_confidence_threshold": 0.77
     },
     "non_tabular_layout_a": {
-      "row_confidence_threshold": 0.8,
       "page_confidence_threshold": 0.74
     },
     "non_tabular_layout_b": {
-      "row_confidence_threshold": 0.8,
       "page_confidence_threshold": 0.74
     }
   }

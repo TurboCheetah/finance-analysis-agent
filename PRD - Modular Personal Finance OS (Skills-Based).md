@@ -436,7 +436,7 @@ Research anchors:
 - [ ] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-36.
+Next issue in strict sequence: TUR-37.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.

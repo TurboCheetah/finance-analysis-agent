@@ -41,7 +41,7 @@ from finance_analysis_agent.pdf_contract.validators import (
     validate_pdf_subagent_request,
     validate_pdf_subagent_response,
 )
-from finance_analysis_agent.pdf_extract.thresholds import resolve_pdf_threshold_policy
+from finance_analysis_agent.pdf_extract.thresholds import PdfThresholdPolicy, resolve_pdf_threshold_policy
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
 
@@ -131,6 +131,55 @@ def _finalize_run(
     )
 
 
+def _build_diagnostics(
+    *,
+    contract_version_received: str,
+    subagent_version_hash: str | None,
+    request_errors: int = 0,
+    response_errors: int = 0,
+    version_errors: int = 0,
+    threshold_policy: PdfThresholdPolicy | None = None,
+    threshold_source_override: str | None = None,
+    row_summary: dict[str, Any] | None = None,
+    review_summary: dict[str, Any] | None = None,
+    errors: list[PdfContractError] | None = None,
+    warnings: list[PdfContractError] | None = None,
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "contract_version_expected": EXPECTED_CONTRACT_VERSION,
+        "contract_version_received": contract_version_received,
+        "subagent_version_hash": subagent_version_hash,
+        "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
+        "validation_summary": {
+            "request_errors": request_errors,
+            "response_errors": response_errors,
+            "version_errors": version_errors,
+        },
+    }
+
+    if threshold_policy is None:
+        diagnostics["effective_threshold"] = None
+        diagnostics["threshold_source"] = threshold_source_override or "unknown"
+    else:
+        diagnostics["effective_threshold"] = {
+            "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+            "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+        }
+        diagnostics["threshold_source"] = threshold_source_override or threshold_policy.source
+        diagnostics["threshold_config_path"] = threshold_policy.config_path
+
+    if row_summary is not None:
+        diagnostics["row_summary"] = row_summary
+    if review_summary is not None:
+        diagnostics["review_summary"] = review_summary
+    if errors is not None:
+        diagnostics["errors"] = [_serialize_error(error) for error in errors]
+    if warnings is not None:
+        diagnostics["warnings"] = [_serialize_error(warning) for warning in warnings]
+
+    return diagnostics
+
+
 def _parse_date(value: date | str | None) -> date | None:
     if value is None:
         return None
@@ -218,20 +267,13 @@ def run_pdf_subagent_handoff(
 
     request_errors = validate_pdf_subagent_request(request)
     if request_errors:
-        diagnostics = {
-            "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-            "contract_version_received": request.contract_version,
-            "subagent_version_hash": None,
-            "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-            "validation_summary": {
-                "request_errors": len(request_errors),
-                "response_errors": 0,
-                "version_errors": 0,
-            },
-            "effective_threshold": None,
-            "threshold_source": "request_invalid",
-            "errors": [_serialize_error(error) for error in request_errors],
-        }
+        diagnostics = _build_diagnostics(
+            contract_version_received=request.contract_version,
+            subagent_version_hash=None,
+            request_errors=len(request_errors),
+            threshold_source_override="request_invalid",
+            errors=request_errors,
+        )
         _finalize_run(
             run_metadata_id=run_metadata_id,
             status="failed",
@@ -262,24 +304,12 @@ def run_pdf_subagent_handoff(
             stage="adapter_call",
             details={"exception": str(exc)},
         )
-        diagnostics = {
-            "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-            "contract_version_received": request.contract_version,
-            "subagent_version_hash": None,
-            "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-            "validation_summary": {
-                "request_errors": 0,
-                "response_errors": 0,
-                "version_errors": 0,
-            },
-            "effective_threshold": {
-                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
-                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
-            },
-            "threshold_source": threshold_policy.source,
-            "threshold_config_path": threshold_policy.config_path,
-            "errors": [_serialize_error(error)],
-        }
+        diagnostics = _build_diagnostics(
+            contract_version_received=request.contract_version,
+            subagent_version_hash=None,
+            threshold_policy=threshold_policy,
+            errors=[error],
+        )
         _finalize_run(
             run_metadata_id=run_metadata_id,
             status="failed",
@@ -303,24 +333,14 @@ def run_pdf_subagent_handoff(
     version_errors = [version_error] if version_error is not None else []
     if response_errors or version_errors:
         errors = response_errors + version_errors
-        diagnostics = {
-            "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-            "contract_version_received": response.contract_version,
-            "subagent_version_hash": response.subagent_version_hash,
-            "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-            "validation_summary": {
-                "request_errors": 0,
-                "response_errors": len(response_errors),
-                "version_errors": len(version_errors),
-            },
-            "effective_threshold": {
-                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
-                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
-            },
-            "threshold_source": threshold_policy.source,
-            "threshold_config_path": threshold_policy.config_path,
-            "errors": [_serialize_error(error) for error in errors],
-        }
+        diagnostics = _build_diagnostics(
+            contract_version_received=response.contract_version,
+            subagent_version_hash=response.subagent_version_hash,
+            response_errors=len(response_errors),
+            version_errors=len(version_errors),
+            threshold_policy=threshold_policy,
+            errors=errors,
+        )
         _finalize_run(
             run_metadata_id=run_metadata_id,
             status="failed",
@@ -473,32 +493,20 @@ def run_pdf_subagent_handoff(
             stage="file_read",
             details={"statement_path": request.statement_path, "exception": str(exc)},
         )
-        diagnostics = {
-            "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-            "contract_version_received": response.contract_version,
-            "subagent_version_hash": response.subagent_version_hash,
-            "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-            "validation_summary": {
-                "request_errors": 0,
-                "response_errors": 0,
-                "version_errors": 0,
-            },
-            "effective_threshold": {
-                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
-                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
-            },
-            "threshold_source": threshold_policy.source,
-            "threshold_config_path": threshold_policy.config_path,
-            "row_summary": {
+        diagnostics = _build_diagnostics(
+            contract_version_received=response.contract_version,
+            subagent_version_hash=response.subagent_version_hash,
+            threshold_policy=threshold_policy,
+            row_summary={
                 "total_rows": len(response.rows),
                 "valid_rows": len(valid_rows),
                 "skipped_rows": skipped_rows,
                 "details": row_diagnostics,
             },
-            "review_summary": review_summary,
-            "errors": [_serialize_error(error)],
-            "warnings": [_serialize_error(warning) for warning in warnings],
-        }
+            review_summary=review_summary,
+            errors=[error],
+            warnings=warnings,
+        )
         _finalize_run(
             run_metadata_id=run_metadata_id,
             status="failed",
@@ -538,32 +546,20 @@ def run_pdf_subagent_handoff(
             stage="ingest",
             details={"exception": str(exc)},
         )
-        diagnostics = {
-            "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-            "contract_version_received": response.contract_version,
-            "subagent_version_hash": response.subagent_version_hash,
-            "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-            "validation_summary": {
-                "request_errors": 0,
-                "response_errors": 0,
-                "version_errors": 0,
-            },
-            "effective_threshold": {
-                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
-                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
-            },
-            "threshold_source": threshold_policy.source,
-            "threshold_config_path": threshold_policy.config_path,
-            "row_summary": {
+        diagnostics = _build_diagnostics(
+            contract_version_received=response.contract_version,
+            subagent_version_hash=response.subagent_version_hash,
+            threshold_policy=threshold_policy,
+            row_summary={
                 "total_rows": len(response.rows),
                 "valid_rows": len(valid_rows),
                 "skipped_rows": skipped_rows,
                 "details": row_diagnostics,
             },
-            "review_summary": review_summary,
-            "errors": [_serialize_error(error)],
-            "warnings": [_serialize_error(warning) for warning in warnings],
-        }
+            review_summary=review_summary,
+            errors=[error],
+            warnings=warnings,
+        )
         _finalize_run(
             run_metadata_id=run_metadata_id,
             status="failed",
@@ -584,23 +580,11 @@ def run_pdf_subagent_handoff(
 
     total_skipped = skipped_rows + ingest_result.skipped_transactions_count
     final_status = "success_with_warnings" if total_skipped > 0 else "success"
-    diagnostics = {
-        "contract_version_expected": EXPECTED_CONTRACT_VERSION,
-        "contract_version_received": response.contract_version,
-        "subagent_version_hash": response.subagent_version_hash,
-        "orchestrator_component_version": ORCHESTRATOR_COMPONENT_VERSION,
-        "validation_summary": {
-            "request_errors": 0,
-            "response_errors": 0,
-            "version_errors": 0,
-        },
-        "effective_threshold": {
-            "row_confidence_threshold": threshold_policy.row_confidence_threshold,
-            "page_confidence_threshold": threshold_policy.page_confidence_threshold,
-        },
-        "threshold_source": threshold_policy.source,
-        "threshold_config_path": threshold_policy.config_path,
-        "row_summary": {
+    diagnostics = _build_diagnostics(
+        contract_version_received=response.contract_version,
+        subagent_version_hash=response.subagent_version_hash,
+        threshold_policy=threshold_policy,
+        row_summary={
             "total_rows": len(response.rows),
             "valid_rows": len(valid_rows),
             "skipped_rows": skipped_rows,
@@ -608,9 +592,9 @@ def run_pdf_subagent_handoff(
             "ingest_skipped_rows": ingest_result.skipped_transactions_count,
             "details": row_diagnostics,
         },
-        "review_summary": review_summary,
-        "warnings": [_serialize_error(warning) for warning in warnings],
-    }
+        review_summary=review_summary,
+        warnings=warnings,
+    )
 
     _finalize_run(
         run_metadata_id=run_metadata_id,

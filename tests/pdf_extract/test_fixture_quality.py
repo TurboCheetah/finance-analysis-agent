@@ -86,6 +86,9 @@ def test_fixture_suite_meets_row_quality_floors() -> None:
     micro_precision_denominator = total_true_positives + total_false_positives
     micro_recall_denominator = total_true_positives + total_false_negatives
 
+    total_rows = total_true_positives + total_false_positives + total_false_negatives
+    assert total_rows > 0, "no rows found in fixtures; quality metrics would be vacuously true"
+
     micro_precision = 1.0 if micro_precision_denominator == 0 else total_true_positives / micro_precision_denominator
     micro_recall = 1.0 if micro_recall_denominator == 0 else total_true_positives / micro_recall_denominator
 

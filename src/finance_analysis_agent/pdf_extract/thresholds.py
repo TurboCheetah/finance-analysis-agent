@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ DEFAULT_PRECISION_MIN = 0.99
 DEFAULT_RECALL_MIN = 0.9
 
 CONFIG_ENV_VAR = "FINANCE_PDF_THRESHOLD_CONFIG"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +74,11 @@ def _float_between_0_and_1(value: Any) -> float | None:
 def _load_config(path: Path) -> dict[str, Any]:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("Failed to load PDF threshold config at %s: %s", path, exc)
         return {}
     if not isinstance(loaded, dict):
+        LOGGER.warning("Invalid PDF threshold config at %s: expected a JSON object", path)
         return {}
     return loaded
 
@@ -86,15 +90,22 @@ def _resolve_section_threshold(
 ) -> float:
     if not isinstance(section_payload, Mapping):
         return fallback
-    return _float_between_0_and_1(section_payload.get(key)) or fallback
+    value = _float_between_0_and_1(section_payload.get(key))
+    return fallback if value is None else value
 
 
-def _quality_floors_from_payload(payload: Mapping[str, Any] | None) -> PdfQualityFloors:
-    precision = DEFAULT_PRECISION_MIN
-    recall = DEFAULT_RECALL_MIN
+def _quality_floors_from_payload(
+    payload: Mapping[str, Any] | None,
+    *,
+    fallback: PdfQualityFloors | None = None,
+) -> PdfQualityFloors:
+    precision = fallback.precision_min if fallback is not None else DEFAULT_PRECISION_MIN
+    recall = fallback.recall_min if fallback is not None else DEFAULT_RECALL_MIN
     if payload is not None:
-        precision = _float_between_0_and_1(payload.get("precision_min")) or precision
-        recall = _float_between_0_and_1(payload.get("recall_min")) or recall
+        configured_precision = _float_between_0_and_1(payload.get("precision_min"))
+        configured_recall = _float_between_0_and_1(payload.get("recall_min"))
+        precision = precision if configured_precision is None else configured_precision
+        recall = recall if configured_recall is None else configured_recall
     return PdfQualityFloors(precision_min=precision, recall_min=recall)
 
 
@@ -138,7 +149,7 @@ def resolve_pdf_threshold_policy(request: PdfSubagentRequest) -> PdfThresholdPol
     if template_payload is not None:
         row_threshold = _resolve_section_threshold(template_payload, "row_confidence_threshold", row_threshold)
         page_threshold = _resolve_section_threshold(template_payload, "page_confidence_threshold", page_threshold)
-        floors = _quality_floors_from_payload(template_payload)
+        floors = _quality_floors_from_payload(template_payload, fallback=floors)
         source = f"config.templates.{template_key}"
 
     issuer_key = _normalize_key(_metadata_value(metadata, "issuer"))
@@ -146,7 +157,7 @@ def resolve_pdf_threshold_policy(request: PdfSubagentRequest) -> PdfThresholdPol
     if template_payload is None and issuer_payload is not None:
         row_threshold = _resolve_section_threshold(issuer_payload, "row_confidence_threshold", row_threshold)
         page_threshold = _resolve_section_threshold(issuer_payload, "page_confidence_threshold", page_threshold)
-        floors = _quality_floors_from_payload(issuer_payload)
+        floors = _quality_floors_from_payload(issuer_payload, fallback=floors)
         source = f"config.issuers.{issuer_key}"
 
     row_override = _float_between_0_and_1(_metadata_value(metadata, "confidence_threshold_override"))
@@ -191,10 +202,10 @@ def resolve_quality_floors(
 
     template_payload = _section_for_key(config, "templates", _normalize_key(template_hint))
     if template_payload is not None:
-        floors = _quality_floors_from_payload(template_payload)
+        floors = _quality_floors_from_payload(template_payload, fallback=floors)
     else:
         issuer_payload = _section_for_key(config, "issuers", _normalize_key(issuer))
         if issuer_payload is not None:
-            floors = _quality_floors_from_payload(issuer_payload)
+            floors = _quality_floors_from_payload(issuer_payload, fallback=floors)
 
     return floors

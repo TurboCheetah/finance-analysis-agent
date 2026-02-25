@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -68,17 +69,18 @@ def evaluate_row_precision_recall(
     rows: list[PdfExtractedRow],
     expected_rows: list[Mapping[str, Any]],
 ) -> RowQualityMetrics:
-    predicted = {_row_key(row) for row in rows if row.parse_status == "parsed"}
-    expected = {_expected_key(row) for row in expected_rows}
+    predicted_counts = Counter(_row_key(row) for row in rows if row.parse_status == "parsed")
+    expected_counts = Counter(_expected_key(row) for row in expected_rows)
 
-    true_positives = len(predicted & expected)
-    false_positives = len(predicted - expected)
-    false_negatives = len(expected - predicted)
+    all_keys = predicted_counts.keys() | expected_counts.keys()
+    true_positives = sum(min(predicted_counts[key], expected_counts[key]) for key in all_keys)
+    false_positives = sum(predicted_counts.values()) - true_positives
+    false_negatives = sum(expected_counts.values()) - true_positives
 
     precision_denominator = true_positives + false_positives
     recall_denominator = true_positives + false_negatives
 
-    precision = 1.0 if precision_denominator == 0 else true_positives / precision_denominator
+    precision = 0.0 if precision_denominator == 0 else true_positives / precision_denominator
     recall = 1.0 if recall_denominator == 0 else true_positives / recall_denominator
 
     return RowQualityMetrics(

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 from finance_analysis_agent.ingest.types import ConflictMode
 from finance_analysis_agent.pdf_contract.types import PdfSubagentRequest
 from finance_analysis_agent.pdf_extract.thresholds import (
+    CONFIG_ENV_VAR,
     resolve_pdf_threshold_policy,
     resolve_quality_floors,
 )
@@ -73,3 +76,44 @@ def test_quality_floors_default_to_global_values() -> None:
 
     assert floors.precision_min == 0.99
     assert floors.recall_min == 0.9
+
+
+def test_zero_threshold_values_are_not_overwritten_by_fallbacks(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "thresholds.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "defaults": {
+                    "row_confidence_threshold": 0.0,
+                    "page_confidence_threshold": 0.0,
+                    "precision_min": 0.0,
+                    "recall_min": 0.0,
+                },
+                "templates": {"zero_template": {"row_confidence_threshold": 0.0, "page_confidence_threshold": 0.0}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(CONFIG_ENV_VAR, str(config_path))
+
+    policy = resolve_pdf_threshold_policy(_request(template_hint="zero_template"))
+    floors = resolve_quality_floors(template_hint="zero_template")
+
+    assert policy.row_confidence_threshold == 0.0
+    assert policy.page_confidence_threshold == 0.0
+    assert floors.precision_min == 0.0
+    assert floors.recall_min == 0.0
+
+
+def test_invalid_config_logs_warning_and_falls_back(monkeypatch, tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing-thresholds.json"
+    monkeypatch.setenv(CONFIG_ENV_VAR, str(missing_path))
+
+    with patch("finance_analysis_agent.pdf_extract.thresholds.LOGGER.warning") as warning_mock:
+        policy = resolve_pdf_threshold_policy(_request())
+
+    assert policy.row_confidence_threshold == 0.8
+    assert policy.source == "request.confidence_threshold"
+    warning_mock.assert_called()
+    warning_text = str(warning_mock.call_args.args[0])
+    assert "Failed to load PDF threshold config" in warning_text
