@@ -9,7 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.dedupe import TxnDedupeMatchRequest, txn_dedupe_match
-from finance_analysis_agent.db.models import Account, DedupeCandidate, Merchant, ReviewItem, Transaction
+from finance_analysis_agent.db.models import (
+    Account,
+    DedupeCandidate,
+    DedupeCandidateEvent,
+    Merchant,
+    ReviewItem,
+    Transaction,
+)
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
@@ -271,6 +278,183 @@ def test_pending_transactions_are_excluded_by_default(db_session: Session) -> No
     assert include_pending_result.hard_auto_linked == 1
 
 
+def test_pending_posted_pair_links_within_conservative_tolerance(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-pending-link",
+        posted_date=date(2026, 1, 20),
+        amount="100.00",
+        original_statement="COFFEE ROASTERS",
+        pending_status="pending",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-posted-link",
+        posted_date=date(2026, 1, 21),
+        amount="100.50",
+        original_statement="coffee roasters",
+        pending_status="posted",
+        source_kind="csv",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="link pending to posted",
+            include_pending=True,
+            scope_transaction_ids=["txn-pending-link", "txn-posted-link"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    assert result.hard_auto_linked == 1
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.classification == "hard"
+    assert candidate.decision == "duplicate"
+    assert candidate.policy_flags["pending_posted_link"] is True
+
+    stored_candidate = db_session.scalar(select(DedupeCandidate))
+    assert stored_candidate is not None
+    assert isinstance(stored_candidate.reason_json, dict)
+    assert stored_candidate.reason_json["policy"]["pending_posted_link"] is True
+
+
+def test_pending_posted_pair_outside_window_is_not_candidate(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-pending-far",
+        posted_date=date(2026, 1, 1),
+        amount="100.00",
+        original_statement="COFFEE ROASTERS",
+        pending_status="pending",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-posted-far",
+        posted_date=date(2026, 1, 12),
+        amount="100.50",
+        original_statement="coffee roasters",
+        pending_status="posted",
+        source_kind="csv",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="reject stale pending posted",
+            include_pending=True,
+            pending_posted_window_days=5,
+            scope_transaction_ids=["txn-pending-far", "txn-posted-far"],
+        ),
+        db_session,
+    )
+
+    assert result.candidates == []
+
+
+def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-cross-hard-a",
+        posted_date=date(2026, 1, 5),
+        amount="20.00",
+        original_statement="STREAMING SERVICE",
+        pending_status="posted",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-cross-hard-b",
+        posted_date=date(2026, 1, 6),
+        amount="20.00",
+        original_statement="streaming service",
+        pending_status="posted",
+        source_kind="pdf",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="gate cross source hard",
+            scope_transaction_ids=["txn-cross-hard-a", "txn-cross-hard-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    review_item = db_session.scalar(select(ReviewItem).where(ReviewItem.source == ReviewSource.DEDUPE.value))
+    assert review_item is not None
+    assert review_item.reason_code == "dedupe.cross_source_review_only"
+    assert isinstance(review_item.payload_json, dict)
+    assert review_item.payload_json["suggestion"]["policy"]["cross_source_review_only_applied"] is True
+
+    assert result.hard_auto_linked == 0
+    assert result.soft_auto_linked == 0
+    assert result.soft_queued == 1
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.classification == "hard"
+    assert candidate.decision is None
+    assert candidate.queued_review_item_id is not None
+    assert candidate.policy_flags["cross_source_review_only_applied"] is True
+
+
+def test_cross_source_soft_match_above_threshold_stays_review_only(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-cross-soft-a",
+        posted_date=date(2026, 1, 15),
+        amount="82.10",
+        original_statement="GROCERY OUTLET WEST",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-cross-soft-b",
+        posted_date=date(2026, 1, 16),
+        amount="82.30",
+        original_statement="GROCERY OUTLET WEST",
+        source_kind="pdf",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="gate cross source soft autolink",
+            soft_review_threshold=0.70,
+            soft_autolink_threshold=0.80,
+            scope_transaction_ids=["txn-cross-soft-a", "txn-cross-soft-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    assert result.hard_auto_linked == 0
+    assert result.soft_auto_linked == 0
+    assert result.soft_queued == 1
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.classification == "soft"
+    assert candidate.decision is None
+    assert candidate.policy_flags["cross_source_review_only_applied"] is True
+
+    review_item = db_session.scalar(select(ReviewItem).where(ReviewItem.source == ReviewSource.DEDUPE.value))
+    assert review_item is not None
+    assert review_item.reason_code == "dedupe.cross_source_review_only"
+
+
 def test_rerun_is_idempotent_for_existing_hard_candidate(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
@@ -312,6 +496,109 @@ def test_rerun_is_idempotent_for_existing_hard_candidate(db_session: Session) ->
     assert second.hard_auto_linked == 1
     assert second.skipped_existing == 1
     assert total_candidates == 1
+
+
+def test_dedupe_candidate_events_record_create_and_decision_change(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-event-a",
+        posted_date=date(2026, 1, 15),
+        amount="82.10",
+        original_statement="GROCERY OUTLET WEST",
+        source_kind="pdf",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-event-b",
+        posted_date=date(2026, 1, 16),
+        amount="82.50",
+        original_statement="GROCERY OUTLET W",
+        source_kind="pdf",
+    )
+    db_session.flush()
+
+    txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="initial soft queue",
+            soft_review_threshold=0.75,
+            soft_autolink_threshold=1.0,
+            scope_transaction_ids=["txn-event-a", "txn-event-b"],
+        ),
+        db_session,
+    )
+    txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="promote to duplicate",
+            soft_review_threshold=0.60,
+            soft_autolink_threshold=0.70,
+            scope_transaction_ids=["txn-event-a", "txn-event-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    event_types = db_session.scalars(
+        select(DedupeCandidateEvent.event_type).order_by(DedupeCandidateEvent.created_at.asc())
+    ).all()
+    assert "dedupe_candidate.created" in event_types
+    assert "dedupe_candidate.decision_changed" in event_types
+
+    decision_event = db_session.scalar(
+        select(DedupeCandidateEvent)
+        .where(DedupeCandidateEvent.event_type == "dedupe_candidate.decision_changed")
+        .order_by(DedupeCandidateEvent.created_at.desc())
+        .limit(1)
+    )
+    assert decision_event is not None
+    assert decision_event.old_value_json == {"decision": None}
+    assert decision_event.new_value_json == {"decision": "duplicate"}
+
+
+def test_idempotent_rerun_does_not_emit_new_candidate_events(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-idem-event-a",
+        posted_date=date(2026, 1, 5),
+        amount="30.00",
+        original_statement="NETFLIX.COM",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-idem-event-b",
+        posted_date=date(2026, 1, 6),
+        amount="30.00",
+        original_statement="netflix com",
+    )
+    db_session.flush()
+
+    txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="first run emits events",
+            scope_transaction_ids=["txn-idem-event-a", "txn-idem-event-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+    first_event_count = db_session.scalar(select(func.count()).select_from(DedupeCandidateEvent))
+
+    txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="second run no-op",
+            scope_transaction_ids=["txn-idem-event-a", "txn-idem-event-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+    second_event_count = db_session.scalar(select(func.count()).select_from(DedupeCandidateEvent))
+
+    assert first_event_count is not None
+    assert second_event_count == first_event_count
 
 
 def test_soft_rerun_preserves_existing_duplicate_decision(db_session: Session) -> None:

@@ -33,6 +33,10 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
         "rules": {("enabled", "priority")},
         "rule_audits": {("transaction_id",), ("rule_run_id",)},
         "dedupe_candidates": {("decision",), ("score",)},
+        "dedupe_candidate_events": {
+            ("dedupe_candidate_id", "created_at"),
+            ("event_type", "created_at"),
+        },
         "review_items": {
             ("status", "item_type"),
             ("confidence",),
@@ -118,6 +122,7 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "rule_runs",
             "rule_audits",
             "dedupe_candidates",
+            "dedupe_candidate_events",
             "review_items",
             "review_item_events",
             "balance_snapshots",

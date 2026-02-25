@@ -15,6 +15,10 @@ class TxnDedupeMatchRequest:
     soft_candidate_window_days: int = 7
     soft_review_threshold: float = 0.75
     soft_autolink_threshold: float = 1.0
+    pending_posted_window_days: int = 5
+    pending_amount_tolerance_pct: float = 0.01
+    pending_amount_tolerance_abs: str = "1.00"
+    cross_source_review_only: bool = True
     limit: int = 1000
 
 
@@ -39,6 +43,7 @@ class DedupeCandidateResult:
     decision: str | None
     queued_review_item_id: str | None = None
     score_breakdown: DedupeScoreBreakdown | None = None
+    policy_flags: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

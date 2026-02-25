@@ -300,6 +300,27 @@ class DedupeCandidate(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class DedupeCandidateEvent(Base):
+    __tablename__ = "dedupe_candidate_events"
+    __table_args__ = (
+        Index(
+            "ix_dedupe_candidate_events_candidate_id_created_at",
+            "dedupe_candidate_id",
+            "created_at",
+        ),
+        Index("ix_dedupe_candidate_events_event_type_created_at", "event_type", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    dedupe_candidate_id: Mapped[str] = mapped_column(ForeignKey("dedupe_candidates.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    old_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    new_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class ReviewItem(Base):
     __tablename__ = "review_items"
     __table_args__ = (
