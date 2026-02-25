@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy import UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -306,6 +306,14 @@ class ReviewItem(Base):
         Index("ix_review_items_confidence", "confidence"),
         Index("ix_review_items_reason_code", "reason_code"),
         Index("ix_review_items_source", "source"),
+        CheckConstraint(
+            "status IN ('to_review', 'in_progress', 'resolved', 'rejected')",
+            name="ck_review_items_status",
+        ),
+        CheckConstraint(
+            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'unknown')",
+            name="ck_review_items_source",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)

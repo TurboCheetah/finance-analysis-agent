@@ -313,6 +313,7 @@ def test_bulk_approve_suggestion_fails_cleanly_for_unsupported_payload(db_sessio
 
     assert result.updated == 0
     assert result.failed == 1
+    assert result.item_outcomes[0].message is not None
     assert review_item is not None and review_item.status == ReviewItemStatus.TO_REVIEW.value
     assert any(event.event_type == "bulk_action_failed" for event in review_events)
 

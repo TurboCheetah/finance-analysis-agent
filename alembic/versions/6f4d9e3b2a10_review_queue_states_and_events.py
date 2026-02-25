@@ -21,6 +21,44 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    with op.batch_alter_table("review_items", recreate="always") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "source",
+                sa.String(),
+                nullable=False,
+                server_default=sa.text("'unknown'"),
+            )
+        )
+        batch_op.create_index("ix_review_items_reason_code", ["reason_code"], unique=False)
+        batch_op.create_index("ix_review_items_source", ["source"], unique=False)
+
+    op.execute("UPDATE review_items SET status = 'to_review' WHERE status = 'open'")
+    op.execute(
+        "UPDATE review_items "
+        "SET status = 'to_review' "
+        "WHERE status NOT IN ('to_review', 'in_progress', 'resolved', 'rejected')"
+    )
+
+    op.execute("UPDATE review_items SET source = 'pdf_extract' WHERE ref_table = 'run_metadata'")
+    op.execute(
+        "UPDATE review_items "
+        "SET source = 'rules' "
+        "WHERE ref_table = 'transactions' "
+        "AND reason_code = 'rule.needs_review'"
+    )
+    op.execute("UPDATE review_items SET source = 'unknown' WHERE source IS NULL OR TRIM(source) = ''")
+
+    with op.batch_alter_table("review_items", recreate="always") as batch_op:
+        batch_op.create_check_constraint(
+            "ck_review_items_status",
+            "status IN ('to_review', 'in_progress', 'resolved', 'rejected')",
+        )
+        batch_op.create_check_constraint(
+            "ck_review_items_source",
+            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'unknown')",
+        )
+
     op.create_table(
         "review_item_events",
         sa.Column("id", sa.String(), nullable=False),
@@ -53,44 +91,11 @@ def upgrade() -> None:
         unique=False,
     )
 
-    with op.batch_alter_table("review_items", recreate="always") as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "source",
-                sa.String(),
-                nullable=False,
-                server_default=sa.text("'unknown'"),
-            )
-        )
-        batch_op.create_index("ix_review_items_reason_code", ["reason_code"], unique=False)
-        batch_op.create_index("ix_review_items_source", ["source"], unique=False)
-
-    op.execute("UPDATE review_items SET status = 'to_review' WHERE status = 'open'")
-    op.execute(
-        "UPDATE review_items "
-        "SET status = 'to_review' "
-        "WHERE status NOT IN ('to_review', 'in_progress', 'resolved', 'rejected')"
-    )
-
-    op.execute("UPDATE review_items SET source = 'pdf_extract' WHERE ref_table = 'run_metadata'")
-    op.execute(
-        "UPDATE review_items "
-        "SET source = 'rules' "
-        "WHERE ref_table = 'transactions' "
-        "AND reason_code = 'rule.needs_review'"
-    )
-    op.execute("UPDATE review_items SET source = 'unknown' WHERE source IS NULL OR TRIM(source) = ''")
-
 
 def downgrade() -> None:
     """Downgrade schema."""
     op.execute("UPDATE review_items SET status = 'open' WHERE status IN ('to_review', 'in_progress')")
     op.execute("UPDATE review_items SET status = 'resolved' WHERE status = 'rejected'")
-
-    with op.batch_alter_table("review_items", recreate="always") as batch_op:
-        batch_op.drop_index("ix_review_items_source")
-        batch_op.drop_index("ix_review_items_reason_code")
-        batch_op.drop_column("source")
 
     op.drop_index(
         "ix_review_item_events_event_type_created_at",
@@ -101,3 +106,10 @@ def downgrade() -> None:
         table_name="review_item_events",
     )
     op.drop_table("review_item_events")
+
+    with op.batch_alter_table("review_items", recreate="always") as batch_op:
+        batch_op.drop_constraint("ck_review_items_source", type_="check")
+        batch_op.drop_constraint("ck_review_items_status", type_="check")
+        batch_op.drop_index("ix_review_items_source")
+        batch_op.drop_index("ix_review_items_reason_code")
+        batch_op.drop_column("source")

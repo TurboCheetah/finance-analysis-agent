@@ -185,12 +185,15 @@ def _resolve_dedupe_candidate_id(review_item: ReviewItem) -> str | None:
 
 
 def _resolve_suggestion_payload(review_item: ReviewItem) -> dict[str, Any]:
-    payload = review_item.payload_json or {}
+    payload = review_item.payload_json
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("Review item payload must be a JSON object")
+
     if isinstance(payload.get("suggestion"), dict):
         return payload["suggestion"]
-    if isinstance(payload, dict):
-        return payload
-    raise ValueError("Review item payload does not contain a structured suggestion")
+    return payload
 
 
 def _apply_transaction_changes(

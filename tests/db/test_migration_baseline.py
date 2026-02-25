@@ -168,8 +168,11 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "override_reason",
             "override_of_batch_id",
         }.issubset(import_batch_columns)
-        review_item_columns = {column["name"] for column in inspector.get_columns("review_items")}
-        assert {"source"}.issubset(review_item_columns)
+        review_item_columns = {
+            column["name"]: column for column in inspector.get_columns("review_items")
+        }
+        assert "source" in review_item_columns
+        assert review_item_columns["source"]["nullable"] is False
 
         with engine.connect() as connection:
             partial_index_sql = connection.execute(

@@ -66,6 +66,14 @@ def test_review_queue_migration_normalizes_status_and_backfills_source(tmp_path:
                         "status": "legacy_state",
                         "created_at": datetime(2026, 2, 25, 1, 1, 0),
                     },
+                    {
+                        "id": "ri-unmapped",
+                        "ref_table": "legacy_table",
+                        "ref_id": "legacy-1",
+                        "reason_code": "legacy_reason",
+                        "status": "open",
+                        "created_at": datetime(2026, 2, 25, 1, 2, 0),
+                    },
                 ],
             )
     finally:
@@ -88,6 +96,7 @@ def test_review_queue_migration_normalizes_status_and_backfills_source(tmp_path:
         assert rows == [
             ("ri-pdf-legacy", "to_review", "pdf_extract"),
             ("ri-rules-open", "to_review", "rules"),
+            ("ri-unmapped", "to_review", "unknown"),
         ]
     finally:
         upgraded_engine.dispose()
