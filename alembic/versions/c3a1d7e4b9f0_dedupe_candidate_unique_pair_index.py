@@ -20,6 +20,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Canonicalize historical rows so each logical pair uses a stable id order.
+    op.execute(
+        """
+        UPDATE dedupe_candidates
+        SET txn_a_id = txn_b_id,
+            txn_b_id = txn_a_id
+        WHERE txn_a_id > txn_b_id
+        """
+    )
+
     # Keep a single row per txn-pair before creating the unique index.
     # Prefer decided rows, then most recent decided_at, then stable rowid order.
     op.execute(
