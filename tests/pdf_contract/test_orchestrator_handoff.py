@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from finance_analysis_agent.db.models import Account, ImportBatch, RunMetadata, Transaction
+from finance_analysis_agent.db.models import Account, ImportBatch, ReviewItem, RunMetadata, Transaction
 from finance_analysis_agent.ingest.types import ConflictMode
 from finance_analysis_agent.pdf_contract.adapter import DeterministicFakePdfSubagentAdapter
 from finance_analysis_agent.pdf_contract.orchestrator import run_pdf_subagent_handoff
@@ -56,7 +56,7 @@ def _response(rows: list[PdfExtractedRow], contract_version: str = "1.3.0") -> P
         rows=rows,
         diagnostics=PdfDiagnostics(
             run_summary={"pages": 1},
-            page_notes=[{"page": 1, "note": "ok"}],
+            page_notes=[{"page_no": 1, "note": "ok"}],
         ),
     )
 
@@ -102,9 +102,13 @@ def test_valid_handoff_persists_run_metadata_and_ingests_rows(db_session: Sessio
     assert run_metadata.diagnostics_json["contract_version_expected"] == "1.0.0"
     assert run_metadata.diagnostics_json["contract_version_received"] == "1.3.0"
     assert run_metadata.diagnostics_json["subagent_version_hash"] == "subagent-abc123"
+    assert run_metadata.diagnostics_json["effective_threshold"]["row_confidence_threshold"] == 0.8
+    assert run_metadata.diagnostics_json["threshold_source"] == "request.confidence_threshold"
+    assert run_metadata.diagnostics_json["review_summary"]["total_items_created"] == 0
 
     assert db_session.scalar(select(func.count()).select_from(ImportBatch)) == 1
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ReviewItem)) == 0
 
 
 def test_invalid_request_fails_without_ingest(db_session: Session) -> None:
@@ -218,9 +222,27 @@ def test_partial_rows_ingest_valid_rows_and_mark_warnings(db_session: Session, t
     assert run_metadata is not None
     assert run_metadata.status == "success_with_warnings"
     assert run_metadata.diagnostics_json is not None
+    assert run_metadata.diagnostics_json["effective_threshold"]["row_confidence_threshold"] == 0.8
+    assert run_metadata.diagnostics_json["effective_threshold"]["page_confidence_threshold"] == 0.75
+    assert run_metadata.diagnostics_json["threshold_source"] == "request.confidence_threshold"
     assert run_metadata.diagnostics_json["row_summary"]["total_rows"] == 3
     assert run_metadata.diagnostics_json["row_summary"]["valid_rows"] == 1
     assert run_metadata.diagnostics_json["row_summary"]["skipped_rows"] == 2
+    assert run_metadata.diagnostics_json["review_summary"]["total_items_created"] == 3
+    assert run_metadata.diagnostics_json["review_summary"]["by_reason"]["low_confidence_row"] == 1
+    assert run_metadata.diagnostics_json["review_summary"]["by_reason"]["parse_error_row"] == 1
+    assert run_metadata.diagnostics_json["review_summary"]["by_reason"]["low_confidence_page"] == 1
+
+    review_items = db_session.scalars(select(ReviewItem).order_by(ReviewItem.reason_code)).all()
+    assert len(review_items) == 3
+    assert {item.reason_code for item in review_items} == {
+        "low_confidence_page",
+        "low_confidence_row",
+        "parse_error_row",
+    }
+    assert all(item.ref_table == "run_metadata" for item in review_items)
+    assert all(item.ref_id == result.run_metadata_id for item in review_items)
+    assert all(item.status == "to_review" for item in review_items)
 
 
 def test_rows_with_missing_confidence_are_skipped_by_threshold(
@@ -257,6 +279,10 @@ def test_rows_with_missing_confidence_are_skipped_by_threshold(
     assert result.inserted_rows == 0
     assert result.skipped_rows == 1
     assert any("confidence threshold" in warning.message for warning in result.warnings)
+
+    review_items = db_session.scalars(select(ReviewItem)).all()
+    assert len(review_items) == 2
+    assert {item.reason_code for item in review_items} == {"low_confidence_row", "low_confidence_page"}
 
 
 def test_adapter_exception_returns_structured_failure(db_session: Session, tmp_path: Path) -> None:

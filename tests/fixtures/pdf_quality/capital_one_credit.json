@@ -1,0 +1,35 @@
+{
+  "name": "capital_one_credit",
+  "template_hint": "capital_one_credit",
+  "metadata": {
+    "statement_year": 2026,
+    "currency": "USD",
+    "issuer": "capital_one"
+  },
+  "text_pages": [
+    "Capital One Credit Card\n01/11 Streaming Service -14.99\n01/12 Restaurant -42.10\n01/13 Refund 15.00"
+  ],
+  "expected_rows": [
+    {
+      "posted_date": "2026-01-11",
+      "amount": "-14.99",
+      "currency": "USD",
+      "original_statement": "Streaming Service",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-12",
+      "amount": "-42.10",
+      "currency": "USD",
+      "original_statement": "Restaurant",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-13",
+      "amount": "15.00",
+      "currency": "USD",
+      "original_statement": "Refund",
+      "page_no": 1
+    }
+  ]
+}

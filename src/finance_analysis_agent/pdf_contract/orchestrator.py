@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -19,6 +21,14 @@ from finance_analysis_agent.ingest.types import (
     SourceType,
 )
 from finance_analysis_agent.pdf_contract.adapter import PdfSubagentAdapter
+from finance_analysis_agent.pdf_contract.review_routing import (
+    REASON_CANONICAL_MAPPING_FAILURE,
+    REASON_LOW_CONFIDENCE_ROW,
+    REASON_PARSE_ERROR_ROW,
+    build_low_confidence_page_drafts,
+    build_row_review_draft,
+    persist_review_items,
+)
 from finance_analysis_agent.pdf_contract.types import (
     PdfContractError,
     PdfExtractedRow,
@@ -31,6 +41,7 @@ from finance_analysis_agent.pdf_contract.validators import (
     validate_pdf_subagent_request,
     validate_pdf_subagent_response,
 )
+from finance_analysis_agent.pdf_extract.thresholds import resolve_pdf_threshold_policy
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
 
@@ -217,6 +228,8 @@ def run_pdf_subagent_handoff(
                 "response_errors": 0,
                 "version_errors": 0,
             },
+            "effective_threshold": None,
+            "threshold_source": "request_invalid",
             "errors": [_serialize_error(error) for error in request_errors],
         }
         _finalize_run(
@@ -237,8 +250,11 @@ def run_pdf_subagent_handoff(
             errors=request_errors,
         )
 
+    threshold_policy = resolve_pdf_threshold_policy(request)
+    effective_request = replace(request, confidence_threshold=threshold_policy.row_confidence_threshold)
+
     try:
-        response = adapter.extract(request)
+        response = adapter.extract(effective_request)
     except Exception as exc:
         error = _error(
             code="adapter_failure",
@@ -256,6 +272,12 @@ def run_pdf_subagent_handoff(
                 "response_errors": 0,
                 "version_errors": 0,
             },
+            "effective_threshold": {
+                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+            },
+            "threshold_source": threshold_policy.source,
+            "threshold_config_path": threshold_policy.config_path,
             "errors": [_serialize_error(error)],
         }
         _finalize_run(
@@ -291,6 +313,12 @@ def run_pdf_subagent_handoff(
                 "response_errors": len(response_errors),
                 "version_errors": len(version_errors),
             },
+            "effective_threshold": {
+                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+            },
+            "threshold_source": threshold_policy.source,
+            "threshold_config_path": threshold_policy.config_path,
             "errors": [_serialize_error(error) for error in errors],
         }
         _finalize_run(
@@ -324,6 +352,8 @@ def run_pdf_subagent_handoff(
     valid_rows: list[CanonicalTransactionInput] = []
     skipped_rows = 0
     row_diagnostics: list[dict[str, Any]] = []
+    review_drafts = []
+    row_threshold = threshold_policy.row_confidence_threshold
     for idx, row in enumerate(response.rows, start=1):
         normalized_status = (row.parse_status or "").strip()
         if normalized_status != "parsed":
@@ -344,9 +374,16 @@ def run_pdf_subagent_handoff(
                     "parse_status": normalized_status,
                 }
             )
+            review_drafts.append(
+                build_row_review_draft(
+                    row=row,
+                    row_index=idx,
+                    reason_code=REASON_PARSE_ERROR_ROW,
+                )
+            )
             continue
 
-        if not _row_passes_threshold(row, request.confidence_threshold):
+        if not _row_passes_threshold(row, row_threshold):
             skipped_rows += 1
             warnings.append(
                 _error(
@@ -356,7 +393,7 @@ def run_pdf_subagent_handoff(
                     details={
                         "row_index": idx,
                         "confidence": row.confidence,
-                        "threshold": request.confidence_threshold,
+                        "threshold": row_threshold,
                     },
                 )
             )
@@ -366,8 +403,16 @@ def run_pdf_subagent_handoff(
                     "ingested": False,
                     "reason": "confidence_threshold",
                     "confidence": row.confidence,
-                    "threshold": request.confidence_threshold,
+                    "threshold": row_threshold,
                 }
+            )
+            review_drafts.append(
+                build_row_review_draft(
+                    row=row,
+                    row_index=idx,
+                    reason_code=REASON_LOW_CONFIDENCE_ROW,
+                    threshold=row_threshold,
+                )
             )
             continue
 
@@ -392,6 +437,31 @@ def run_pdf_subagent_handoff(
                     "exception": str(exc),
                 }
             )
+            review_drafts.append(
+                build_row_review_draft(
+                    row=row,
+                    row_index=idx,
+                    reason_code=REASON_CANONICAL_MAPPING_FAILURE,
+                    exception=str(exc),
+                )
+            )
+
+    review_drafts.extend(
+        build_low_confidence_page_drafts(
+            rows=response.rows,
+            page_threshold=threshold_policy.page_confidence_threshold,
+        )
+    )
+    persist_review_items(
+        run_metadata_id=run_metadata_id,
+        drafts=review_drafts,
+        session=session,
+    )
+    review_summary = {
+        "total_items_created": len(review_drafts),
+        "by_reason": dict(Counter(draft.reason_code for draft in review_drafts)),
+        "by_item_type": dict(Counter(draft.item_type for draft in review_drafts)),
+    }
 
     statement_path = Path(request.statement_path)
     try:
@@ -413,12 +483,19 @@ def run_pdf_subagent_handoff(
                 "response_errors": 0,
                 "version_errors": 0,
             },
+            "effective_threshold": {
+                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+            },
+            "threshold_source": threshold_policy.source,
+            "threshold_config_path": threshold_policy.config_path,
             "row_summary": {
                 "total_rows": len(response.rows),
                 "valid_rows": len(valid_rows),
                 "skipped_rows": skipped_rows,
                 "details": row_diagnostics,
             },
+            "review_summary": review_summary,
             "errors": [_serialize_error(error)],
             "warnings": [_serialize_error(warning) for warning in warnings],
         }
@@ -471,12 +548,19 @@ def run_pdf_subagent_handoff(
                 "response_errors": 0,
                 "version_errors": 0,
             },
+            "effective_threshold": {
+                "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+                "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+            },
+            "threshold_source": threshold_policy.source,
+            "threshold_config_path": threshold_policy.config_path,
             "row_summary": {
                 "total_rows": len(response.rows),
                 "valid_rows": len(valid_rows),
                 "skipped_rows": skipped_rows,
                 "details": row_diagnostics,
             },
+            "review_summary": review_summary,
             "errors": [_serialize_error(error)],
             "warnings": [_serialize_error(warning) for warning in warnings],
         }
@@ -510,6 +594,12 @@ def run_pdf_subagent_handoff(
             "response_errors": 0,
             "version_errors": 0,
         },
+        "effective_threshold": {
+            "row_confidence_threshold": threshold_policy.row_confidence_threshold,
+            "page_confidence_threshold": threshold_policy.page_confidence_threshold,
+        },
+        "threshold_source": threshold_policy.source,
+        "threshold_config_path": threshold_policy.config_path,
         "row_summary": {
             "total_rows": len(response.rows),
             "valid_rows": len(valid_rows),
@@ -518,6 +608,7 @@ def run_pdf_subagent_handoff(
             "ingest_skipped_rows": ingest_result.skipped_transactions_count,
             "details": row_diagnostics,
         },
+        "review_summary": review_summary,
         "warnings": [_serialize_error(warning) for warning in warnings],
     }
 
