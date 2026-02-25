@@ -307,6 +307,20 @@ class ReviewItem(Base):
         Index("ix_review_items_confidence", "confidence"),
         Index("ix_review_items_reason_code", "reason_code"),
         Index("ix_review_items_source", "source"),
+        Index(
+            "ux_review_items_active_dedupe_candidate",
+            "ref_table",
+            "ref_id",
+            "item_type",
+            "source",
+            unique=True,
+            sqlite_where=text(
+                "ref_table = 'dedupe_candidates' "
+                "AND item_type = 'dedupe_candidate_suggestion' "
+                "AND source = 'dedupe' "
+                "AND status IN ('to_review', 'in_progress')"
+            ),
+        ),
         CheckConstraint(
             "status IN ('to_review', 'in_progress', 'resolved', 'rejected')",
             name="ck_review_items_status",

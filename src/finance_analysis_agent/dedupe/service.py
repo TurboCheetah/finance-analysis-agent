@@ -22,10 +22,10 @@ from finance_analysis_agent.db.models import DedupeCandidate, Merchant, ReviewIt
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
-_ACTIVE_REVIEW_STATUSES = {
+_ACTIVE_REVIEW_STATUSES = (
     ReviewItemStatus.TO_REVIEW.value,
     ReviewItemStatus.IN_PROGRESS.value,
-}
+)
 _SOFT_REVIEW_REASON = "dedupe.soft_match"
 _SOFT_REVIEW_ITEM_TYPE = "dedupe_candidate_suggestion"
 _SOFT_REVIEW_REF_TABLE = "dedupe_candidates"
@@ -397,7 +397,7 @@ def _get_active_review_item(
             ReviewItem.ref_table == _SOFT_REVIEW_REF_TABLE,
             ReviewItem.ref_id == candidate_id,
             ReviewItem.source == ReviewSource.DEDUPE.value,
-            ReviewItem.status.in_(sorted(_ACTIVE_REVIEW_STATUSES)),
+            ReviewItem.status.in_(_ACTIVE_REVIEW_STATUSES),
         )
         .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
         .limit(1)
@@ -479,21 +479,58 @@ def _ensure_soft_review_item(
         existing_review.payload_json = payload
         return existing_review
 
-    review_item = ReviewItem(
-        id=str(uuid4()),
-        item_type=_SOFT_REVIEW_ITEM_TYPE,
-        ref_table=_SOFT_REVIEW_REF_TABLE,
-        ref_id=candidate.id,
-        reason_code=_SOFT_REVIEW_REASON,
-        confidence=score,
-        status=ReviewItemStatus.TO_REVIEW.value,
-        source=ReviewSource.DEDUPE.value,
-        assigned_to=None,
-        payload_json=payload,
-        created_at=now,
-        resolved_at=None,
+    review_item_id = session.scalar(
+        sqlite_insert(ReviewItem)
+        .values(
+            id=str(uuid4()),
+            item_type=_SOFT_REVIEW_ITEM_TYPE,
+            ref_table=_SOFT_REVIEW_REF_TABLE,
+            ref_id=candidate.id,
+            reason_code=_SOFT_REVIEW_REASON,
+            confidence=score,
+            status=ReviewItemStatus.TO_REVIEW.value,
+            source=ReviewSource.DEDUPE.value,
+            assigned_to=None,
+            payload_json=payload,
+            created_at=now,
+            resolved_at=None,
+        )
+        .on_conflict_do_nothing(
+            index_elements=[
+                ReviewItem.ref_table,
+                ReviewItem.ref_id,
+                ReviewItem.item_type,
+                ReviewItem.source,
+            ],
+            index_where=and_(
+                ReviewItem.ref_table == _SOFT_REVIEW_REF_TABLE,
+                ReviewItem.item_type == _SOFT_REVIEW_ITEM_TYPE,
+                ReviewItem.source == ReviewSource.DEDUPE.value,
+                ReviewItem.status.in_(_ACTIVE_REVIEW_STATUSES),
+            ),
+        )
+        .returning(ReviewItem.id)
     )
-    session.add(review_item)
+
+    if review_item_id is None:
+        active_reviews_by_candidate_id.pop(candidate.id, None)
+        existing_review = _get_active_review_item(
+            candidate_id=candidate.id,
+            active_reviews_by_candidate_id=active_reviews_by_candidate_id,
+            session=session,
+        )
+        if existing_review is None:
+            raise RuntimeError(
+                "Failed to resolve active dedupe review item after upsert conflict "
+                f"for candidate {candidate.id}"
+            )
+        existing_review.confidence = score
+        existing_review.payload_json = payload
+        return existing_review
+
+    review_item = session.get(ReviewItem, review_item_id)
+    if review_item is None:
+        raise RuntimeError(f"Failed to load ReviewItem {review_item_id}")
     active_reviews_by_candidate_id[candidate.id] = review_item
     return review_item
 
@@ -524,10 +561,14 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
 
     processed_pairs: set[tuple[str, str]] = set()
 
+    max_candidate_window_days = max(
+        validated.soft_candidate_window_days,
+        validated.hard_date_window_days,
+    )
     for idx, left in enumerate(transactions):
         for right in transactions[idx + 1 :]:
             day_delta = abs((left.posted_date - right.posted_date).days)
-            if day_delta > validated.soft_candidate_window_days and right.posted_date >= left.posted_date:
+            if day_delta > max_candidate_window_days and right.posted_date >= left.posted_date:
                 break
 
             if left.account_id != right.account_id:
@@ -556,7 +597,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                         ordered_left.normalized_statement,
                         ordered_right.normalized_statement,
                     ),
-                    source_kind_factor=1.0 if left.source_kind == right.source_kind else 0.0,
+                    source_kind_factor=1.0 if ordered_left.source_kind == ordered_right.source_kind else 0.0,
                     total_score=1.0,
                     details={
                         "hard_match": True,
@@ -567,6 +608,8 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 score = 1.0
                 decision = _DUPLICATE_DECISION
             else:
+                if day_delta > validated.soft_candidate_window_days:
+                    continue
                 score_breakdown = _compute_soft_score(
                     ordered_left,
                     ordered_right,

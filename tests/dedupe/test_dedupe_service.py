@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -93,6 +95,60 @@ def test_hard_match_autolinks_without_review_item(db_session: Session) -> None:
             actor="tester",
             reason="detect duplicate",
             scope_transaction_ids=["txn-hard-a", "txn-hard-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    candidates = db_session.scalars(select(DedupeCandidate)).all()
+    review_items = db_session.scalars(
+        select(ReviewItem).where(ReviewItem.source == ReviewSource.DEDUPE.value)
+    ).all()
+
+    assert result.hard_auto_linked == 1
+    assert result.soft_queued == 0
+    assert result.soft_auto_linked == 0
+    assert len(result.candidates) == 1
+    assert result.candidates[0].classification == "hard"
+    assert result.candidates[0].decision == "duplicate"
+
+    assert len(candidates) == 1
+    assert candidates[0].decision == "duplicate"
+    assert candidates[0].reason_json is not None
+    assert candidates[0].reason_json["match_type"] == "hard"
+    assert review_items == []
+
+
+def test_hard_match_still_runs_when_hard_window_exceeds_soft_window(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_merchant(db_session, "mer-hard-window", "Coffee Shop")
+    _seed_transaction(
+        db_session,
+        "txn-hard-window-a",
+        posted_date=date(2026, 1, 10),
+        amount="12.34",
+        original_statement="COFFEE SHOP #123",
+        source_kind="csv",
+        merchant_id="mer-hard-window",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-hard-window-b",
+        posted_date=date(2026, 1, 12),
+        amount="12.34",
+        original_statement="coffee shop 123",
+        source_kind="csv",
+        merchant_id="mer-hard-window",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="hard window larger than soft window",
+            hard_date_window_days=3,
+            soft_candidate_window_days=1,
+            scope_transaction_ids=["txn-hard-window-a", "txn-hard-window-b"],
         ),
         db_session,
     )
@@ -424,3 +480,43 @@ def test_soft_score_details_align_with_canonical_txn_order(db_session: Session) 
     assert score_breakdown is not None
     assert score_breakdown.details["left_payee"] == "right payee store"
     assert score_breakdown.details["right_payee"] == "left payee store"
+
+
+def test_active_dedupe_review_items_are_unique_for_candidate(db_session: Session) -> None:
+    now = utcnow()
+    db_session.add(
+        ReviewItem(
+            id="ri-dedupe-unique-a",
+            item_type="dedupe_candidate_suggestion",
+            ref_table="dedupe_candidates",
+            ref_id="dc-unique",
+            reason_code="dedupe.soft_match",
+            confidence=0.75,
+            status=ReviewItemStatus.TO_REVIEW.value,
+            source=ReviewSource.DEDUPE.value,
+            assigned_to=None,
+            payload_json={"seed": "a"},
+            created_at=now,
+            resolved_at=None,
+        )
+    )
+    db_session.add(
+        ReviewItem(
+            id="ri-dedupe-unique-b",
+            item_type="dedupe_candidate_suggestion",
+            ref_table="dedupe_candidates",
+            ref_id="dc-unique",
+            reason_code="dedupe.soft_match",
+            confidence=0.76,
+            status=ReviewItemStatus.IN_PROGRESS.value,
+            source=ReviewSource.DEDUPE.value,
+            assigned_to="triager",
+            payload_json={"seed": "b"},
+            created_at=now,
+            resolved_at=None,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
