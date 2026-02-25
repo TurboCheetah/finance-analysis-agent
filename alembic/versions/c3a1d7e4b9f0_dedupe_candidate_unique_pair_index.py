@@ -1,5 +1,9 @@
 """add unique txn-pair index for dedupe candidates
 
+This migration is SQLite-specific. It relies on SQLite JSON/rowid behavior and
+on SQLite UPDATE semantics where all right-hand-side expressions are evaluated
+from the original row values before assignments are applied.
+
 Revision ID: c3a1d7e4b9f0
 Revises: 6f4d9e3b2a10
 Create Date: 2026-02-25 14:30:00.000000
@@ -23,6 +27,8 @@ def upgrade() -> None:
     # Canonicalize historical rows so each logical pair uses a stable id order.
     # For swapped rows, also realign reason_json side-specific fields so txn_a/txn_b
     # snapshots and payee labels still match the persisted txn_a_id/txn_b_id.
+    # Note: `SET txn_a_id = txn_b_id, txn_b_id = txn_a_id` intentionally relies on
+    # SQLite evaluating RHS expressions from original row values.
     op.execute(
         """
         UPDATE dedupe_candidates
