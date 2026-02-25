@@ -60,6 +60,7 @@ _ERR_REQUIRED = "{field_name} is required"
 _ERR_DECIMAL_COMPAT = "{field_name} must be a decimal-compatible value"
 _ERR_NON_NEGATIVE = "{field_name} must be >= 0"
 _ERR_BETWEEN_0_1 = "{field_name} must be between 0 and 1"
+_ERR_WHOLE_NUMBER = "{field_name} must be a whole number"
 _ERR_REVIEW_THRESHOLD_ORDER = "soft_review_threshold must be <= soft_autolink_threshold"
 _ERR_LIMIT_POSITIVE = "limit must be > 0"
 
@@ -166,6 +167,13 @@ def _parse_non_negative_decimal(value: object, *, field_name: str) -> Decimal:
     return parsed
 
 
+def _parse_non_negative_int(value: object, *, field_name: str) -> int:
+    parsed = _parse_non_negative_decimal(value, field_name=field_name)
+    if parsed != parsed.to_integral_value():
+        raise _DedupeValidationError(_ERR_WHOLE_NUMBER.format(field_name=field_name))
+    return int(parsed)
+
+
 def _normalized_pending_status(value: str) -> str:
     return value.strip().casefold()
 
@@ -174,12 +182,14 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
     actor = _parse_non_empty(request.actor, field_name="actor")
     reason = _parse_non_empty(request.reason, field_name="reason")
 
-    hard_date_window_days = int(request.hard_date_window_days)
-    soft_candidate_window_days = int(request.soft_candidate_window_days)
-    if hard_date_window_days < 0:
-        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="hard_date_window_days"))
-    if soft_candidate_window_days < 0:
-        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="soft_candidate_window_days"))
+    hard_date_window_days = _parse_non_negative_int(
+        request.hard_date_window_days,
+        field_name="hard_date_window_days",
+    )
+    soft_candidate_window_days = _parse_non_negative_int(
+        request.soft_candidate_window_days,
+        field_name="soft_candidate_window_days",
+    )
 
     soft_review_threshold = float(request.soft_review_threshold)
     soft_autolink_threshold = float(request.soft_autolink_threshold)
@@ -190,9 +200,10 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
     if soft_review_threshold > soft_autolink_threshold:
         raise _DedupeValidationError(_ERR_REVIEW_THRESHOLD_ORDER)
 
-    pending_posted_window_days = int(request.pending_posted_window_days)
-    if pending_posted_window_days < 0:
-        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="pending_posted_window_days"))
+    pending_posted_window_days = _parse_non_negative_int(
+        request.pending_posted_window_days,
+        field_name="pending_posted_window_days",
+    )
 
     pending_amount_tolerance_pct = float(request.pending_amount_tolerance_pct)
     if (
@@ -774,8 +785,12 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
     max_candidate_window_days = max(
         validated.soft_candidate_window_days,
         validated.hard_date_window_days,
-        validated.pending_posted_window_days,
     )
+    if validated.include_pending:
+        max_candidate_window_days = max(
+            max_candidate_window_days,
+            validated.pending_posted_window_days,
+        )
     for idx, left in enumerate(transactions):
         for right in transactions[idx + 1 :]:
             day_delta = abs((left.posted_date - right.posted_date).days)

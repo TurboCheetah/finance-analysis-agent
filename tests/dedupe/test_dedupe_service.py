@@ -400,6 +400,44 @@ def test_pending_amount_tolerance_abs_rejects_non_finite_values(
         )
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "hard_date_window_days",
+        "soft_candidate_window_days",
+        "pending_posted_window_days",
+    ],
+)
+@pytest.mark.parametrize("invalid_value", [1.9, "1.9"])
+def test_window_day_fields_reject_fractional_values(
+    db_session: Session,
+    field_name: str,
+    invalid_value: float | str,
+) -> None:
+    request_kwargs: dict[str, object] = {
+        "actor": "tester",
+        "reason": "reject fractional window day values",
+        field_name: invalid_value,
+    }
+    with pytest.raises(ValueError, match=field_name):
+        txn_dedupe_match(TxnDedupeMatchRequest(**request_kwargs), db_session)
+
+
+def test_window_day_fields_accept_decimal_like_whole_number_strings(db_session: Session) -> None:
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="accept whole-number decimal-like strings",
+            hard_date_window_days="3.0",
+            soft_candidate_window_days="7.0",
+            pending_posted_window_days="5.0",
+        ),
+        db_session,
+    )
+
+    assert result.candidates == []
+
+
 def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
