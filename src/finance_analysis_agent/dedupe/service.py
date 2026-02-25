@@ -364,6 +364,8 @@ def _evaluate_pending_posted_match(
 
     within_date_window = day_delta <= validated.pending_posted_window_days
     within_amount_tolerance = amount_delta <= amount_tolerance
+    # Intentionally conservative: _jaccard_similarity returns 0.0 when either side is empty,
+    # so pairs with one/both empty payees fail merchant_pass and cannot match on date/amount alone.
     merchant_pass = payee_exact or payee_similarity >= _PENDING_POSTED_SIMILARITY_FLOOR
 
     return _PendingPostedMatchEvaluation(
@@ -773,6 +775,19 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
         )
 
     active_reviews_by_candidate_id: dict[str, ReviewItem | None] = {}
+    transaction_ids = [transaction.id for transaction in transactions]
+    existing_candidates_by_pair: dict[tuple[str, str], DedupeCandidate] = {}
+    if transaction_ids:
+        existing_candidates = session.scalars(
+            select(DedupeCandidate).where(
+                DedupeCandidate.txn_a_id.in_(transaction_ids),
+                DedupeCandidate.txn_b_id.in_(transaction_ids),
+            )
+        ).all()
+        existing_candidates_by_pair = {
+            _pair_key(candidate.txn_a_id, candidate.txn_b_id): candidate
+            for candidate in existing_candidates
+        }
 
     hard_auto_linked = 0
     soft_queued = 0
@@ -933,14 +948,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 right=ordered_right,
                 policy=policy_context,
             )
-            existing_candidate = session.scalar(
-                select(DedupeCandidate)
-                .where(
-                    DedupeCandidate.txn_a_id == pair[0],
-                    DedupeCandidate.txn_b_id == pair[1],
-                )
-                .limit(1)
-            )
+            existing_candidate = existing_candidates_by_pair.get(pair)
             existing_state = (
                 _candidate_state_payload(existing_candidate)
                 if existing_candidate is not None

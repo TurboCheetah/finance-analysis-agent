@@ -360,6 +360,46 @@ def test_pending_posted_pair_outside_window_is_not_candidate(db_session: Session
     assert result.candidates == []
 
 
+def test_pending_posted_pair_within_scan_window_but_outside_pending_window_is_not_candidate(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-pending-near",
+        posted_date=date(2026, 1, 1),
+        amount="100.00",
+        original_statement="COFFEE ROASTERS",
+        pending_status="pending",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-posted-near",
+        posted_date=date(2026, 1, 7),
+        amount="100.00",
+        original_statement="coffee roasters",
+        pending_status="posted",
+        source_kind="csv",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="within scan but outside pending-posted window",
+            include_pending=True,
+            pending_posted_window_days=5,
+            soft_candidate_window_days=7,
+            soft_review_threshold=1.0,
+            scope_transaction_ids=["txn-pending-near", "txn-posted-near"],
+        ),
+        db_session,
+    )
+
+    assert result.candidates == []
+
+
 @pytest.mark.parametrize(
     "pending_amount_tolerance_pct",
     [
