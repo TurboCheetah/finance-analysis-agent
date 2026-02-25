@@ -44,6 +44,8 @@ def test_retroactive_window_updates_only_in_range_with_audits(db_session) -> Non
     assert feb_posted is not None and feb_posted.excluded is False
 
     assert result.rule_run_ids
+    assert result.changed_transactions == 1
+    assert result.evaluated_rules == 1
     assert db_session.scalar(select(func.count()).select_from(RuleRun)) == 1
     assert db_session.scalar(select(func.count()).select_from(RuleAudit)) == 2
     assert db_session.scalar(select(func.count()).select_from(TransactionEvent)) == 1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -168,10 +169,16 @@ def add_rule(
     return rule
 
 
-def add_open_rule_review(session: Session, *, transaction_id: str, review_id: str = "rev-1") -> None:
+def add_open_rule_review(
+    session: Session,
+    *,
+    transaction_id: str,
+    review_id: str | None = None,
+) -> None:
+    resolved_review_id = review_id or str(uuid4())
     session.add(
         ReviewItem(
-            id=review_id,
+            id=resolved_review_id,
             item_type="transaction_rule",
             ref_table="transactions",
             ref_id=transaction_id,

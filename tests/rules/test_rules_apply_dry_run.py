@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import (
     GoalEvent,
@@ -15,7 +18,7 @@ from finance_analysis_agent.rules import RuleRunMode, RuleScope, RulesApplyReque
 from tests.rules.helpers import add_rule, seed_rules_baseline
 
 
-def _table_count(session, model) -> int:
+def _table_count(session: Session, model: type[Any]) -> int:
     return int(session.scalar(select(func.count()).select_from(model)) or 0)
 
 

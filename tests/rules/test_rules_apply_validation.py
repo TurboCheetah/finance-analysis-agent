@@ -28,7 +28,7 @@ def test_validation_rejects_invalid_matcher_and_action_shapes(db_session) -> Non
         )
 
 
-def test_validation_rejects_unknown_category_and_goal_ids(db_session) -> None:
+def test_validation_rejects_unknown_category_id(db_session) -> None:
     seed_rules_baseline(db_session)
     add_rule(
         db_session,
@@ -38,6 +38,28 @@ def test_validation_rejects_unknown_category_and_goal_ids(db_session) -> None:
         action_json={"set_category": "cat-missing", "link_goal": "goal-missing"},
     )
     with pytest.raises(ValueError, match="Unknown category id"):
+        apply_rules(
+            RulesApplyRequest(
+                scope=RuleScope(),
+                dry_run=True,
+                run_mode=RuleRunMode.MANUAL,
+                actor="tester",
+                reason="preview",
+            ),
+            db_session,
+        )
+
+
+def test_validation_rejects_unknown_goal_id(db_session) -> None:
+    seed_rules_baseline(db_session)
+    add_rule(
+        db_session,
+        rule_id="rule-bad-goal",
+        priority=1,
+        matcher_json={"account": {"in": ["acct-1"]}},
+        action_json={"link_goal": "goal-missing"},
+    )
+    with pytest.raises(ValueError, match="Unknown goal id"):
         apply_rules(
             RulesApplyRequest(
                 scope=RuleScope(),

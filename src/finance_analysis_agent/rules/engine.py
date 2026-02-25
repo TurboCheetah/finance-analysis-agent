@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import (
@@ -95,6 +96,7 @@ class _TransactionState:
     excluded: bool
     tags: set[str]
     has_open_review: bool
+    linked_goal_ids: set[str]
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -102,6 +104,7 @@ class _TransactionState:
             "category_id": self.category_id,
             "excluded": self.excluded,
             "tags": sorted(self.tags),
+            "goal_links": sorted(self.linked_goal_ids),
             "review_status": (
                 _REVIEW_STATUS_NEEDS_REVIEW if self.has_open_review else _REVIEW_STATUS_REVIEWED
             ),
@@ -205,9 +208,12 @@ def _parse_in_list(
                 raise ValueError(f"{field_name}.in cannot include null in rule {rule_id}")
             parsed.add(None)
             continue
-        if not isinstance(value, str) or not value.strip():
+        if not isinstance(value, str):
             raise ValueError(f"{field_name}.in must contain non-empty strings in rule {rule_id}")
-        parsed.add(value)
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise ValueError(f"{field_name}.in must contain non-empty strings in rule {rule_id}")
+        parsed.add(normalized_value)
     return parsed
 
 
@@ -433,8 +439,10 @@ def _simulate_action(rule: _RuleSpec, state: _TransactionState) -> _RuleEvaluati
         changes["set_review_status"] = {"old": _REVIEW_STATUS_NEEDS_REVIEW, "new": _REVIEW_STATUS_REVIEWED}
 
     if action.link_goal is not None:
-        eval_result.goal_id = action.link_goal
-        changes["link_goal"] = {"goal_id": action.link_goal}
+        if action.link_goal not in state.linked_goal_ids:
+            state.linked_goal_ids.add(action.link_goal)
+            eval_result.goal_id = action.link_goal
+            changes["link_goal"] = {"goal_id": action.link_goal}
 
     if not changes:
         eval_result.changes_json = {"noop": True}
@@ -492,6 +500,7 @@ def _run_simulation(
     merchant_names_by_id: dict[str, str],
     tag_names_by_transaction: dict[str, set[str]],
     open_reviews_by_transaction: dict[str, list[ReviewItem]],
+    linked_goals_by_transaction: dict[str, set[str]],
 ) -> tuple[
     dict[str, _TransactionState],
     dict[str, _TransactionTrace],
@@ -523,6 +532,7 @@ def _run_simulation(
             excluded=transaction.excluded,
             tags=set(tag_names_by_transaction.get(transaction.id, set())),
             has_open_review=bool(open_reviews_by_transaction.get(transaction.id)),
+            linked_goal_ids=set(linked_goals_by_transaction.get(transaction.id, set())),
         )
         states[transaction.id] = state
         traces[transaction.id] = _TransactionTrace(before=state.snapshot())
@@ -591,16 +601,26 @@ def _merchant_id_for_name(
     if existing_id is not None:
         return existing_id
 
-    merchant = Merchant(
-        id=str(uuid4()),
-        canonical_name=canonical_name,
-        confidence=None,
-        created_at=utcnow(),
-    )
-    session.add(merchant)
-    session.flush()
-    merchant_ids_by_name[canonical_name] = merchant.id
-    return merchant.id
+    try:
+        with session.begin_nested():
+            merchant = Merchant(
+                id=str(uuid4()),
+                canonical_name=canonical_name,
+                confidence=None,
+                created_at=utcnow(),
+            )
+            session.add(merchant)
+            session.flush()
+            merchant_ids_by_name[canonical_name] = merchant.id
+            return merchant.id
+    except IntegrityError:
+        existing_id = session.scalar(
+            select(Merchant.id).where(Merchant.canonical_name == canonical_name)
+        )
+        if existing_id is None:
+            raise
+        merchant_ids_by_name[canonical_name] = existing_id
+        return existing_id
 
 
 def _tag_id_for_name(
@@ -612,11 +632,19 @@ def _tag_id_for_name(
     existing_id = tag_ids_by_name.get(name)
     if existing_id is not None:
         return existing_id
-    tag = Tag(id=str(uuid4()), name=name, created_at=utcnow())
-    session.add(tag)
-    session.flush()
-    tag_ids_by_name[name] = tag.id
-    return tag.id
+    try:
+        with session.begin_nested():
+            tag = Tag(id=str(uuid4()), name=name, created_at=utcnow())
+            session.add(tag)
+            session.flush()
+            tag_ids_by_name[name] = tag.id
+            return tag.id
+    except IntegrityError:
+        existing_id = session.scalar(select(Tag.id).where(Tag.name == name))
+        if existing_id is None:
+            raise
+        tag_ids_by_name[name] = existing_id
+        return existing_id
 
 
 def _scope_payload(scope: RuleScope) -> dict[str, Any]:
@@ -700,7 +728,7 @@ def _apply_simulation_results(
         created_run_ids.append(rule_run.id)
 
         evaluations = evaluations_by_rule[spec.rule.id]
-        for transaction, evaluation in zip(transactions, evaluations):
+        for transaction, evaluation in zip(transactions, evaluations, strict=True):
             if evaluation.matched and evaluation.has_effect:
                 field_changes: dict[str, Any] = {}
                 if evaluation.merchant_name_target is not None:
@@ -853,12 +881,27 @@ def apply_rules(request: RulesApplyRequest, session: Session) -> RuleApplyResult
         for review_item in review_rows:
             open_reviews_by_transaction.setdefault(review_item.ref_id, []).append(review_item)
 
+    linked_goals_by_transaction: dict[str, set[str]] = {}
+    if transaction_ids:
+        goal_rows = session.execute(
+            select(GoalEvent.related_transaction_id, GoalEvent.goal_id).where(
+                GoalEvent.event_type == _GOAL_EVENT_TYPE,
+                GoalEvent.related_transaction_id.in_(transaction_ids),
+                GoalEvent.related_transaction_id.is_not(None),
+            )
+        ).all()
+        for transaction_id, goal_id in goal_rows:
+            if transaction_id is None:
+                continue
+            linked_goals_by_transaction.setdefault(transaction_id, set()).add(goal_id)
+
     states, traces, evaluations_by_rule, matched_rules, changed_transactions, rule_summary = _run_simulation(
         transactions=transactions,
         rule_specs=rule_specs,
         merchant_names_by_id=merchant_names_by_id,
         tag_names_by_transaction=tag_names_by_transaction,
         open_reviews_by_transaction=open_reviews_by_transaction,
+        linked_goals_by_transaction=linked_goals_by_transaction,
     )
     diffs = _build_diffs(states, traces, changed_transactions)
 
