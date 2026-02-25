@@ -17,6 +17,7 @@ from finance_analysis_agent.db.models import (
     Transaction,
     TransactionTag,
 )
+from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
 
@@ -184,7 +185,8 @@ def add_open_rule_review(
             ref_id=transaction_id,
             reason_code="rule.needs_review",
             confidence=None,
-            status="open",
+            status=ReviewItemStatus.TO_REVIEW.value,
+            source=ReviewSource.RULES.value,
             assigned_to=None,
             payload_json={"seed": True},
             created_at=utcnow(),

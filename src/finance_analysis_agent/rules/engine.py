@@ -27,16 +27,22 @@ from finance_analysis_agent.db.models import (
 from finance_analysis_agent.provenance.audit_writers import record_rule_audit
 from finance_analysis_agent.provenance.transaction_events_service import mutate_transaction_fields
 from finance_analysis_agent.provenance.types import ProvenanceSource, RuleAuditWriteRequest, TransactionMutationRequest
+from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.rules.types import RuleApplyResult, RuleDiff, RuleRunMode, RuleScope, RulesApplyRequest
 from finance_analysis_agent.utils.time import utcnow
 
 _REVIEW_REASON_CODE = "rule.needs_review"
 _REVIEW_ITEM_TYPE = "transaction_rule"
 _REVIEW_REF_TABLE = "transactions"
-_REVIEW_STATUS_OPEN = "open"
-_REVIEW_STATUS_RESOLVED = "resolved"
+_REVIEW_STATUS_TO_REVIEW = ReviewItemStatus.TO_REVIEW.value
+_REVIEW_ACTIVE_STATUSES = (
+    ReviewItemStatus.TO_REVIEW.value,
+    ReviewItemStatus.IN_PROGRESS.value,
+)
+_REVIEW_STATUS_RESOLVED = ReviewItemStatus.RESOLVED.value
 _REVIEW_STATUS_NEEDS_REVIEW = "needs_review"
 _REVIEW_STATUS_REVIEWED = "reviewed"
+_REVIEW_SOURCE = ReviewSource.RULES.value
 _GOAL_EVENT_TYPE = "rule.linked_transaction"
 _UNSET = object()
 
@@ -771,7 +777,8 @@ def _apply_simulation_results(
                         ref_id=transaction.id,
                         reason_code=_REVIEW_REASON_CODE,
                         confidence=None,
-                        status=_REVIEW_STATUS_OPEN,
+                        status=_REVIEW_STATUS_TO_REVIEW,
+                        source=_REVIEW_SOURCE,
                         assigned_to=None,
                         payload_json={"rule_id": spec.rule.id, "actor": actor, "reason": reason},
                         created_at=utcnow(),
@@ -875,7 +882,7 @@ def apply_rules(request: RulesApplyRequest, session: Session) -> RuleApplyResult
                 ReviewItem.ref_table == _REVIEW_REF_TABLE,
                 ReviewItem.ref_id.in_(transaction_ids),
                 ReviewItem.reason_code == _REVIEW_REASON_CODE,
-                ReviewItem.status == _REVIEW_STATUS_OPEN,
+                ReviewItem.status.in_(_REVIEW_ACTIVE_STATUSES),
             )
         ).all()
         for review_item in review_rows:
