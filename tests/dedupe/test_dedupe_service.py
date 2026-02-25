@@ -324,7 +324,7 @@ def test_pending_posted_pair_links_within_conservative_tolerance(db_session: Ses
     assert stored_candidate.reason_json["policy"]["pending_posted_link"] is True
 
 
-def test_pending_posted_pair_outside_window_is_not_candidate(db_session: Session) -> None:
+def test_pending_posted_pair_outside_scan_window_is_not_candidate(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
         db_session,
@@ -478,6 +478,32 @@ def test_window_day_fields_accept_decimal_like_whole_number_strings(db_session: 
     assert result.candidates == []
 
 
+@pytest.mark.parametrize("invalid_limit", [1.5, "1.5"])
+def test_limit_rejects_fractional_values(db_session: Session, invalid_limit: float | str) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        txn_dedupe_match(
+            TxnDedupeMatchRequest(
+                actor="tester",
+                reason="reject fractional limit values",
+                limit=invalid_limit,
+            ),
+            db_session,
+        )
+
+
+def test_limit_accepts_decimal_like_whole_number_strings(db_session: Session) -> None:
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="accept whole-number decimal-like limit",
+            limit="1000.0",
+        ),
+        db_session,
+    )
+
+    assert result.candidates == []
+
+
 def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
@@ -524,6 +550,58 @@ def test_cross_source_hard_match_is_review_only_when_policy_enabled(db_session: 
     assert candidate.classification == "hard"
     assert candidate.decision is None
     assert candidate.queued_review_item_id is not None
+    assert candidate.policy_flags["cross_source_review_only_applied"] is True
+
+
+def test_cross_source_pending_posted_hard_match_stays_review_only(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-cross-pending-a",
+        posted_date=date(2026, 1, 20),
+        amount="100.00",
+        original_statement="COFFEE ROASTERS",
+        pending_status="pending",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-cross-pending-b",
+        posted_date=date(2026, 1, 21),
+        amount="100.50",
+        original_statement="coffee roasters",
+        pending_status="posted",
+        source_kind="pdf",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="gate cross-source pending posted hard",
+            include_pending=True,
+            scope_transaction_ids=["txn-cross-pending-a", "txn-cross-pending-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    review_item = db_session.scalar(select(ReviewItem).where(ReviewItem.source == ReviewSource.DEDUPE.value))
+    assert review_item is not None
+    assert review_item.reason_code == "dedupe.cross_source_review_only"
+    assert isinstance(review_item.payload_json, dict)
+    assert review_item.payload_json["suggestion"]["policy"]["pending_posted_link"] is True
+    assert review_item.payload_json["suggestion"]["policy"]["cross_source_review_only_applied"] is True
+
+    assert result.hard_auto_linked == 0
+    assert result.soft_auto_linked == 0
+    assert result.soft_queued == 1
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.classification == "hard"
+    assert candidate.decision is None
+    assert candidate.queued_review_item_id is not None
+    assert candidate.policy_flags["pending_posted_link"] is True
     assert candidate.policy_flags["cross_source_review_only_applied"] is True
 
 

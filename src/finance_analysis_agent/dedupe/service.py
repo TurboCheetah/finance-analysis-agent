@@ -218,8 +218,8 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
         field_name="pending_amount_tolerance_abs",
     )
 
-    limit = int(request.limit)
-    if limit <= 0:
+    limit = _parse_non_negative_int(request.limit, field_name="limit")
+    if limit == 0:
         raise _DedupeValidationError(_ERR_LIMIT_POSITIVE)
 
     return _ValidatedRequest(
@@ -905,6 +905,8 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 else:
                     decision = None
 
+            # Cross-source review-only policy applies uniformly to any candidate that
+            # would otherwise be auto-linked as duplicate, including pending->posted matches.
             is_cross_source = ordered_left.source_kind != ordered_right.source_kind
             cross_source_review_only_applied = bool(
                 is_cross_source
