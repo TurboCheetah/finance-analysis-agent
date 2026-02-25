@@ -1,12 +1,12 @@
-"""Finance Analysis Agent package."""
+"""Rules engine service exports."""
 
-from finance_analysis_agent.rules import (
+from finance_analysis_agent.rules.engine import apply_rules
+from finance_analysis_agent.rules.types import (
     RuleApplyResult,
     RuleDiff,
     RuleRunMode,
     RuleScope,
     RulesApplyRequest,
-    apply_rules,
 )
 
 __all__ = [
