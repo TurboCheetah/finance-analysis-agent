@@ -21,14 +21,24 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Keep a single row per txn-pair before creating the unique index.
+    # Prefer decided rows, then most recent decided_at, then stable rowid order.
     op.execute(
         """
-        DELETE FROM dedupe_candidates
-        WHERE rowid NOT IN (
-            SELECT MIN(rowid)
+        WITH ranked AS (
+            SELECT
+                rowid,
+                ROW_NUMBER() OVER (
+                    PARTITION BY txn_a_id, txn_b_id
+                    ORDER BY
+                        CASE WHEN decision IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        CASE WHEN decided_at IS NULL THEN 1 ELSE 0 END ASC,
+                        decided_at DESC,
+                        rowid ASC
+                ) AS rn
             FROM dedupe_candidates
-            GROUP BY txn_a_id, txn_b_id
         )
+        DELETE FROM dedupe_candidates
+        WHERE rowid IN (SELECT rowid FROM ranked WHERE rn > 1)
         """
     )
     op.create_index(
