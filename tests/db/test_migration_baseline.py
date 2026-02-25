@@ -47,7 +47,12 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("review_item_id", "created_at"),
             ("event_type", "created_at"),
         },
-        "reconciliations": {("account_id", "period_end"), ("status",)},
+        "reconciliations": {
+            ("account_id", "period_end"),
+            ("status",),
+            ("statement_id",),
+            ("approved_adjustment_txn_id",),
+        },
     }
 
     for table, expected in expected_indexes.items():
@@ -178,6 +183,19 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         }
         assert "source" in review_item_columns
         assert review_item_columns["source"]["nullable"] is False
+
+        reconciliation_columns = {
+            column["name"]: column for column in inspector.get_columns("reconciliations")
+        }
+        assert {
+            "statement_id",
+            "unresolved_count",
+            "adjustment_magnitude",
+            "details_json",
+            "approved_adjustment_txn_id",
+            "approved_by",
+            "approved_at",
+        }.issubset(reconciliation_columns)
 
         with engine.connect() as connection:
             partial_index_sql = connection.execute(
