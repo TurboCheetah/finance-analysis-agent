@@ -426,7 +426,7 @@ Research anchors:
 - [x] TUR-37: Implement deterministic rules engine (ordered matchers/actions + dry-run)
 - [x] TUR-38: Build Review Queue service with bulk triage workflows
 - [x] TUR-39: Add explainable categorize_suggest service (optional heuristic/LLM-assisted)
-- [ ] TUR-40: Implement txn_dedupe_match hard/soft matching core
+- [x] TUR-40: Implement txn_dedupe_match hard/soft matching core
 - [ ] TUR-41: Add pending->posted linking + multi-source duplicate safeguards
 - [ ] TUR-42: Implement statement reconciliation checkpoints + trust score
 - [ ] TUR-43: Implement zero-based budgeting engine (`to_assign`, targets, underfunded/overspent)
@@ -436,7 +436,7 @@ Research anchors:
 - [ ] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-40.
+Next issue in strict sequence: TUR-41.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
