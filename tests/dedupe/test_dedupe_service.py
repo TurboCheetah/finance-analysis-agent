@@ -258,6 +258,69 @@ def test_rerun_is_idempotent_for_existing_hard_candidate(db_session: Session) ->
     assert total_candidates == 1
 
 
+def test_soft_rerun_preserves_existing_duplicate_decision(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-preserve-a",
+        posted_date=date(2026, 1, 15),
+        amount="82.10",
+        original_statement="GROCERY OUTLET WEST",
+        source_kind="pdf",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-preserve-b",
+        posted_date=date(2026, 1, 16),
+        amount="82.50",
+        original_statement="GROCERY OUTLET W",
+        source_kind="pdf",
+    )
+    decided_at_before = utcnow()
+    db_session.add(
+        DedupeCandidate(
+            id="dc-preserve-accepted",
+            txn_a_id="txn-preserve-a",
+            txn_b_id="txn-preserve-b",
+            score=0.0,
+            decision="duplicate",
+            reason_json={"seed": True},
+            created_at=utcnow(),
+            decided_at=decided_at_before,
+        )
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="preserve accepted decisions on rerun",
+            soft_review_threshold=0.75,
+            soft_autolink_threshold=1.0,
+            scope_transaction_ids=["txn-preserve-a", "txn-preserve-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    candidate = db_session.get(DedupeCandidate, "dc-preserve-accepted")
+    review_items = db_session.scalars(
+        select(ReviewItem).where(ReviewItem.source == ReviewSource.DEDUPE.value)
+    ).all()
+
+    assert result.hard_auto_linked == 0
+    assert result.soft_auto_linked == 1
+    assert result.soft_queued == 0
+    assert len(result.candidates) == 1
+    assert result.candidates[0].classification == "soft"
+    assert result.candidates[0].decision == "duplicate"
+    assert result.candidates[0].queued_review_item_id is None
+    assert candidate is not None
+    assert candidate.decision == "duplicate"
+    assert candidate.decided_at == decided_at_before
+    assert review_items == []
+
+
 def test_autolink_resolves_existing_active_dedupe_review_item(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(

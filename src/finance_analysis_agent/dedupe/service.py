@@ -8,7 +8,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import case, or_, select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -306,30 +306,6 @@ def _upsert_candidate(
 ) -> tuple[DedupeCandidate, bool]:
     now = utcnow()
     decided_at = now if decision is not None else None
-    if decision is None:
-        decided_at_update_expr = None
-    else:
-        decided_at_update_expr = case(
-            (
-                DedupeCandidate.decision.is_distinct_from(decision),
-                decided_at,
-            ),
-            (
-                DedupeCandidate.decided_at.is_(None),
-                decided_at,
-            ),
-            else_=DedupeCandidate.decided_at,
-        )
-
-    update_conditions = [
-        DedupeCandidate.score != score,
-        DedupeCandidate.decision.is_distinct_from(decision),
-        DedupeCandidate.reason_json != reason_json,
-    ]
-    if decision is None:
-        update_conditions.append(DedupeCandidate.decided_at.is_not(None))
-    else:
-        update_conditions.append(DedupeCandidate.decided_at.is_(None))
 
     insert_stmt = sqlite_insert(DedupeCandidate).values(
         id=str(uuid4()),
@@ -341,13 +317,42 @@ def _upsert_candidate(
         created_at=now,
         decided_at=decided_at,
     )
+    incoming_decision = insert_stmt.excluded.decision
+    decision_update_expr = case(
+        (incoming_decision.is_(None), DedupeCandidate.decision),
+        else_=incoming_decision,
+    )
+    decided_at_update_expr = case(
+        (incoming_decision.is_(None), DedupeCandidate.decided_at),
+        (
+            or_(
+                DedupeCandidate.decision.is_distinct_from(incoming_decision),
+                DedupeCandidate.decided_at.is_(None),
+            ),
+            now,
+        ),
+        else_=DedupeCandidate.decided_at,
+    )
+    update_conditions = [
+        DedupeCandidate.score != insert_stmt.excluded.score,
+        DedupeCandidate.reason_json != insert_stmt.excluded.reason_json,
+        and_(
+            incoming_decision.is_not(None),
+            DedupeCandidate.decision.is_distinct_from(incoming_decision),
+        ),
+        and_(
+            incoming_decision.is_not(None),
+            DedupeCandidate.decided_at.is_(None),
+        ),
+    ]
+
     upsert_stmt = (
         insert_stmt.on_conflict_do_update(
             index_elements=[DedupeCandidate.txn_a_id, DedupeCandidate.txn_b_id],
             set_={
-                "score": score,
-                "decision": decision,
-                "reason_json": reason_json,
+                "score": insert_stmt.excluded.score,
+                "decision": decision_update_expr,
+                "reason_json": insert_stmt.excluded.reason_json,
                 "decided_at": decided_at_update_expr,
             },
             where=or_(*update_conditions),
@@ -593,6 +598,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
             if was_unchanged:
                 skipped_existing += 1
 
+            effective_decision = candidate.decision
             queued_review_item_id: str | None = None
             if classification == "hard":
                 _close_active_review_item_for_autolink(
@@ -603,7 +609,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                     session=session,
                 )
                 hard_auto_linked += 1
-            elif decision == _DUPLICATE_DECISION:
+            elif effective_decision == _DUPLICATE_DECISION:
                 _close_active_review_item_for_autolink(
                     candidate_id=candidate.id,
                     actor=validated.actor,
