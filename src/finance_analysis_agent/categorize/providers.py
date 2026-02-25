@@ -23,6 +23,7 @@ _RECENCY_WEIGHT = 0.10
 _STATEMENT_SIMILARITY_MIN = 0.2
 _MIN_CONFIDENCE = 0.2
 _DEFAULT_HISTORY_LIMIT = 5000
+_UNKNOWN_PROVIDER_MSG = "Unknown suggestion provider '{name}'. Expected one of: {allowed}"
 _STOPWORDS = {
     "payment",
     "purchase",
@@ -242,5 +243,5 @@ def resolve_suggestion_provider(provider_name: str) -> SuggestionProvider:
     provider = _PROVIDERS.get(normalized_name)
     if provider is None:
         allowed = ", ".join(sorted(_PROVIDERS))
-        raise ValueError(f"Unknown suggestion provider '{provider_name}'. Expected one of: {allowed}")
+        raise ValueError(_UNKNOWN_PROVIDER_MSG.format(name=provider_name, allowed=allowed))
     return provider

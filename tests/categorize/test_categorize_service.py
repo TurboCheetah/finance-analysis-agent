@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -179,6 +180,12 @@ def test_categorize_suggest_queues_review_items_and_writes_run_metadata(db_sessi
     assert len(review_items) == 2
     assert {item.reason_code for item in review_items} == {"categorize.suggestion", "categorize.low_confidence"}
     assert all(item.status == ReviewItemStatus.TO_REVIEW.value for item in review_items)
+    for review_item in review_items:
+        payload = review_item.payload_json or {}
+        suggestion = payload.get("suggestion", {})
+        generated_at = suggestion.get("generated_at")
+        assert isinstance(generated_at, str)
+        assert review_item.created_at == datetime.fromisoformat(generated_at)
 
     target_high = db_session.get(Transaction, "txn-target-high")
     target_low = db_session.get(Transaction, "txn-target-low")
@@ -198,6 +205,27 @@ def test_categorize_suggest_queues_review_items_and_writes_run_metadata(db_sessi
     assert run.diagnostics_json is not None
     assert run.diagnostics_json["generated"] == result.generated
     assert run.diagnostics_json["queued"] == 2
+
+
+def test_categorize_suggest_histogram_uses_request_threshold_split(db_session: Session) -> None:
+    _seed_baseline_data(db_session)
+    db_session.flush()
+
+    result = categorize_suggest(
+        CategorizeSuggestRequest(
+            actor="tester",
+            reason="custom threshold histogram",
+            confidence_threshold=0.6,
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    run = db_session.get(RunMetadata, result.run_metadata_id)
+    assert run is not None and run.diagnostics_json is not None
+    histogram = run.diagnostics_json["confidence_histogram"]
+    assert "gte_0_80" not in histogram
+    assert "gte_0_50_lt_0_60" in histogram or "gte_0_60" in histogram
 
 
 def test_categorize_suggest_is_idempotent_for_existing_active_review_item(db_session: Session) -> None:

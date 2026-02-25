@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,6 +45,7 @@ _ACTIVE_REVIEW_STATUSES = {
 _SUGGESTION_ITEM_TYPE = "transaction_category_suggestion"
 _SUGGESTION_REF_TABLE = "transactions"
 _SUGGESTION_KIND_TRANSACTION_CATEGORY = "transaction_category"
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -113,12 +115,13 @@ def _extract_suggested_category_id(payload: dict[str, object] | None) -> str | N
     return None
 
 
-def _confidence_bucket(confidence: float) -> str:
+def _confidence_bucket(confidence: float, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD) -> str:
     if confidence < 0.5:
         return "lt_0_50"
-    if confidence < DEFAULT_CONFIDENCE_THRESHOLD:
-        return "gte_0_50_lt_0_80"
-    return "gte_0_80"
+    threshold_bucket = f"{threshold:.2f}".replace(".", "_")
+    if confidence < threshold:
+        return f"gte_0_50_lt_{threshold_bucket}"
+    return f"gte_{threshold_bucket}"
 
 
 def _start_run(
@@ -301,7 +304,7 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
                         provider=validated.provider,
                         generated_at=generation_timestamp,
                     ),
-                    created_at=utcnow(),
+                    created_at=generation_timestamp,
                     resolved_at=None,
                 )
                 session.add(existing_review)
@@ -311,7 +314,9 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
                 low_confidence += 1
             else:
                 high_confidence += 1
-            confidence_histogram[_confidence_bucket(suggestion.confidence)] += 1
+            confidence_histogram[
+                _confidence_bucket(suggestion.confidence, validated.confidence_threshold)
+            ] += 1
 
             queued_suggestions.append(
                 SuggestionCandidate(
@@ -367,8 +372,13 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
                 },
                 session=session,
             )
-        except Exception:
-            pass
+        except Exception as finish_exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Failed to finalize run metadata %s for provider %s: %s",
+                run_metadata_id,
+                validated.provider,
+                finish_exc,
+            )
         raise
 
 
