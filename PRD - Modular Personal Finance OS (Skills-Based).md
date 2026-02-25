@@ -424,7 +424,7 @@ Research anchors:
 - [x] TUR-35: Implement layered PDF extraction pipeline (heuristics -> table assist -> OCR fallback)
 - [x] TUR-36: Create PDF fixture pack + confidence thresholds + review routing
 - [x] TUR-37: Implement deterministic rules engine (ordered matchers/actions + dry-run)
-- [ ] TUR-38: Build Review Queue service with bulk triage workflows
+- [x] TUR-38: Build Review Queue service with bulk triage workflows
 - [ ] TUR-39: Add explainable categorize_suggest service (optional heuristic/LLM-assisted)
 - [ ] TUR-40: Implement txn_dedupe_match hard/soft matching core
 - [ ] TUR-41: Add pending->posted linking + multi-source duplicate safeguards
@@ -436,7 +436,7 @@ Research anchors:
 - [ ] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-38.
+Next issue in strict sequence: TUR-39.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
