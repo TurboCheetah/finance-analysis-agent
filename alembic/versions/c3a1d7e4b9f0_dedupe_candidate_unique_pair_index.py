@@ -21,11 +21,39 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Canonicalize historical rows so each logical pair uses a stable id order.
+    # For swapped rows, also realign reason_json side-specific fields so txn_a/txn_b
+    # snapshots and payee labels still match the persisted txn_a_id/txn_b_id.
     op.execute(
         """
         UPDATE dedupe_candidates
         SET txn_a_id = txn_b_id,
-            txn_b_id = txn_a_id
+            txn_b_id = txn_a_id,
+            reason_json = CASE
+                WHEN reason_json IS NULL THEN NULL
+                WHEN json_valid(reason_json) = 0 THEN reason_json
+                WHEN json_type(reason_json, '$.score_breakdown.details.left_payee') IS NOT NULL
+                    OR json_type(reason_json, '$.score_breakdown.details.right_payee') IS NOT NULL
+                THEN json_set(
+                    json_set(
+                        reason_json,
+                        '$.txn_a_snapshot',
+                        json_extract(reason_json, '$.txn_b_snapshot'),
+                        '$.txn_b_snapshot',
+                        json_extract(reason_json, '$.txn_a_snapshot')
+                    ),
+                    '$.score_breakdown.details.left_payee',
+                    json_extract(reason_json, '$.score_breakdown.details.right_payee'),
+                    '$.score_breakdown.details.right_payee',
+                    json_extract(reason_json, '$.score_breakdown.details.left_payee')
+                )
+                ELSE json_set(
+                    reason_json,
+                    '$.txn_a_snapshot',
+                    json_extract(reason_json, '$.txn_b_snapshot'),
+                    '$.txn_b_snapshot',
+                    json_extract(reason_json, '$.txn_a_snapshot')
+                )
+            END
         WHERE txn_a_id > txn_b_id
         """
     )
