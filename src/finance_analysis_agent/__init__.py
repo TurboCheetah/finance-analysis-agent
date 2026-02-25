@@ -8,6 +8,17 @@ from finance_analysis_agent.rules import (
     RulesApplyRequest,
     apply_rules,
 )
+from finance_analysis_agent.review_queue import (
+    BulkActionType,
+    BulkTriageRequest,
+    BulkTriageResult,
+    ReviewItemStatus,
+    ReviewQueueListRequest,
+    ReviewQueueListResult,
+    ReviewSource,
+    bulk_triage,
+    list_review_items,
+)
 
 __all__ = [
     "RuleApplyResult",
@@ -15,5 +26,14 @@ __all__ = [
     "RuleRunMode",
     "RuleScope",
     "RulesApplyRequest",
+    "BulkActionType",
+    "BulkTriageRequest",
+    "BulkTriageResult",
+    "ReviewItemStatus",
+    "ReviewQueueListRequest",
+    "ReviewQueueListResult",
+    "ReviewSource",
     "apply_rules",
+    "bulk_triage",
+    "list_review_items",
 ]

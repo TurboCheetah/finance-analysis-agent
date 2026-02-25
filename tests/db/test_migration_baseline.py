@@ -33,7 +33,16 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
         "rules": {("enabled", "priority")},
         "rule_audits": {("transaction_id",), ("rule_run_id",)},
         "dedupe_candidates": {("decision",), ("score",)},
-        "review_items": {("status", "item_type"), ("confidence",)},
+        "review_items": {
+            ("status", "item_type"),
+            ("confidence",),
+            ("reason_code",),
+            ("source",),
+        },
+        "review_item_events": {
+            ("review_item_id", "created_at"),
+            ("event_type", "created_at"),
+        },
         "reconciliations": {("account_id", "period_end"), ("status",)},
     }
 
@@ -110,6 +119,7 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "rule_audits",
             "dedupe_candidates",
             "review_items",
+            "review_item_events",
             "balance_snapshots",
             "reconciliations",
             "budgets",
@@ -158,6 +168,8 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "override_reason",
             "override_of_batch_id",
         }.issubset(import_batch_columns)
+        review_item_columns = {column["name"] for column in inspector.get_columns("review_items")}
+        assert {"source"}.issubset(review_item_columns)
 
         with engine.connect() as connection:
             partial_index_sql = connection.execute(

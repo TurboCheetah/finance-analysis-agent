@@ -243,6 +243,7 @@ def test_partial_rows_ingest_valid_rows_and_mark_warnings(db_session: Session, t
     assert all(item.ref_table == "run_metadata" for item in review_items)
     assert all(item.ref_id == result.run_metadata_id for item in review_items)
     assert all(item.status == "to_review" for item in review_items)
+    assert all(item.source == "pdf_extract" for item in review_items)
 
 
 def test_rows_with_missing_confidence_are_skipped_by_threshold(

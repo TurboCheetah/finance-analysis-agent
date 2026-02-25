@@ -304,6 +304,8 @@ class ReviewItem(Base):
     __table_args__ = (
         Index("ix_review_items_status_item_type", "status", "item_type"),
         Index("ix_review_items_confidence", "confidence"),
+        Index("ix_review_items_reason_code", "reason_code"),
+        Index("ix_review_items_source", "source"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -313,10 +315,30 @@ class ReviewItem(Base):
     reason_code: Mapped[str] = mapped_column(String, nullable=False)
     confidence: Mapped[float | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
     assigned_to: Mapped[str | None] = mapped_column(String)
     payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ReviewItemEvent(Base):
+    __tablename__ = "review_item_events"
+    __table_args__ = (
+        Index("ix_review_item_events_review_item_id_created_at", "review_item_id", "created_at"),
+        Index("ix_review_item_events_event_type_created_at", "event_type", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    review_item_id: Mapped[str] = mapped_column(ForeignKey("review_items.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str | None] = mapped_column(String)
+    from_status: Mapped[str | None] = mapped_column(String)
+    to_status: Mapped[str | None] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class BalanceSnapshot(Base):

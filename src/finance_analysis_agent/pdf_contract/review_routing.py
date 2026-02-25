@@ -13,9 +13,8 @@ from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import ReviewItem
 from finance_analysis_agent.pdf_contract.types import PdfExtractedRow
+from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
-
-REVIEW_STATUS_TO_REVIEW = "to_review"
 
 REASON_LOW_CONFIDENCE_ROW = "low_confidence_row"
 REASON_PARSE_ERROR_ROW = "parse_error_row"
@@ -156,7 +155,8 @@ def persist_review_items(
                 ref_id=run_metadata_id,
                 reason_code=draft.reason_code,
                 confidence=draft.confidence,
-                status=REVIEW_STATUS_TO_REVIEW,
+                status=ReviewItemStatus.TO_REVIEW.value,
+                source=ReviewSource.PDF_EXTRACT.value,
                 assigned_to=None,
                 payload_json=draft.payload_json,
                 created_at=timestamp,
