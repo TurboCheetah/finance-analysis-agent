@@ -169,25 +169,8 @@ def parse_statement_pages(
 
             date_match = _DATE_PREFIX_RE.search(line)
             amount_match = _AMOUNT_SUFFIX_RE.search(line)
-            if date_match is None or amount_match is None:
-                parse_errors += 1
-                rows.append(
-                    PdfExtractedRow(
-                        account_id=request.account_id,
-                        posted_date=None,
-                        amount=None,
-                        currency=currency_hint,
-                        pending_status=None,
-                        original_statement=line,
-                        confidence=0.2,
-                        parse_status="parse_error",
-                        error_code=taxonomy.LAYOUT_SHIFT,
-                        page_no=page_idx,
-                        row_no=row_no,
-                        provenance={"tier": tier.value, "profile": profile.name},
-                    )
-                )
-                continue
+            # Candidate filtering already guarantees both matches are present.
+            assert date_match is not None and amount_match is not None
 
             date_token = date_match.group(1)
             amount_token = amount_match.group("amount")

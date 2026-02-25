@@ -134,6 +134,7 @@ def run_layered_extraction(
     page_notes: list[dict[str, object]] = []
     rows: list[PdfExtractedRow] = []
     ocr_invoked = False
+    ocr_page_count = 0
 
     text_pages, text_warnings = text_page_supplier(request)
     warnings.extend(text_warnings)
@@ -167,6 +168,7 @@ def run_layered_extraction(
         ocr_invoked = True
         extraction_tiers_used.append(PdfExtractionTier.OCR_FALLBACK)
         ocr_result = ocr_engine.extract_text_pages(request)
+        ocr_page_count = len(ocr_result.text_pages)
         warnings.extend(ocr_result.warnings)
         page_notes.extend(_normalize_page_notes(ocr_result.page_notes, PdfExtractionTier.OCR_FALLBACK))
 
@@ -191,7 +193,8 @@ def run_layered_extraction(
 
     diagnostics = PdfDiagnostics(
         run_summary={
-            "total_pages": len(text_pages),
+            "total_pages": max(len(text_pages), ocr_page_count),
+            "ocr_page_count": ocr_page_count,
             "total_rows": len(rows),
             "parsed_rows": parsed_rows,
             "parse_error_rows": parse_error_rows,

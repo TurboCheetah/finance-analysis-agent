@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -12,6 +13,7 @@ from finance_analysis_agent.pdf_contract.types import (
 )
 from finance_analysis_agent.pdf_extract.ocr import OcrEngine, OcrResult
 from finance_analysis_agent.pdf_extract.pipeline import run_layered_extraction
+from finance_analysis_agent.pdf_extract import taxonomy
 from finance_analysis_agent.pdf_extract.table_assist import TableAssistResult, TableExtractor
 
 
@@ -38,7 +40,7 @@ class _StubOcrEngine(OcrEngine):
 def _request() -> PdfSubagentRequest:
     return PdfSubagentRequest(
         contract_version="1.0.0",
-        statement_path="/tmp/fake-statement.pdf",
+        statement_path=f"{tempfile.gettempdir()}/fake-statement.pdf",
         account_id="acct-1",
         schema_version="1.0.0",
         actor="pdf-test",
@@ -211,7 +213,7 @@ def test_non_transaction_lines_are_not_emitted_as_layout_shift_rows() -> None:
     )
 
     assert response.rows == []
-    assert any("layout_shift" in warning for warning in response.warnings)
+    assert any(taxonomy.LAYOUT_SHIFT in warning for warning in response.warnings)
 
 
 def test_error_rows_are_deduped_across_tiers_by_line_identity() -> None:
