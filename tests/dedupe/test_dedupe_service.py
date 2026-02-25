@@ -557,6 +557,41 @@ def test_dedupe_candidate_events_record_create_and_decision_change(db_session: S
     assert decision_event.new_value_json == {"decision": "duplicate"}
 
 
+def test_new_hard_match_candidate_does_not_emit_decision_changed_event(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-hard-event-a",
+        posted_date=date(2026, 1, 10),
+        amount="12.34",
+        original_statement="COFFEE SHOP #123",
+        source_kind="csv",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-hard-event-b",
+        posted_date=date(2026, 1, 11),
+        amount="12.34",
+        original_statement="coffee shop 123",
+        source_kind="csv",
+    )
+    db_session.flush()
+
+    txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="new hard match event shape",
+            scope_transaction_ids=["txn-hard-event-a", "txn-hard-event-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    event_types = db_session.scalars(select(DedupeCandidateEvent.event_type)).all()
+    assert "dedupe_candidate.created" in event_types
+    assert "dedupe_candidate.decision_changed" not in event_types
+
+
 def test_idempotent_rerun_does_not_emit_new_candidate_events(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_transaction(
@@ -597,8 +632,8 @@ def test_idempotent_rerun_does_not_emit_new_candidate_events(db_session: Session
     db_session.flush()
     second_event_count = db_session.scalar(select(func.count()).select_from(DedupeCandidateEvent))
 
-    assert first_event_count is not None
-    assert second_event_count == first_event_count
+    assert first_event_count > 0, "first run should emit at least one candidate event"
+    assert second_event_count == first_event_count, "idempotent rerun must not emit new events"
 
 
 def test_soft_rerun_preserves_existing_duplicate_decision(db_session: Session) -> None:

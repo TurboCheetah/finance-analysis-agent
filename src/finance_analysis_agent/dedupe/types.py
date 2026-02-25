@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 
 @dataclass(slots=True)
@@ -17,7 +18,7 @@ class TxnDedupeMatchRequest:
     soft_autolink_threshold: float = 1.0
     pending_posted_window_days: int = 5
     pending_amount_tolerance_pct: float = 0.01
-    pending_amount_tolerance_abs: str = "1.00"
+    pending_amount_tolerance_abs: Decimal | str = "1.00"
     cross_source_review_only: bool = True
     limit: int = 1000
 

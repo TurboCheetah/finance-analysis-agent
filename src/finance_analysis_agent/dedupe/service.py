@@ -55,6 +55,17 @@ _MERCHANT_PAYEE_WEIGHT = 0.25
 _STATEMENT_WEIGHT = 0.05
 _SOURCE_KIND_WEIGHT = 0.05
 
+_ERR_REQUIRED = "{field_name} is required"
+_ERR_DECIMAL_COMPAT = "{field_name} must be a decimal-compatible value"
+_ERR_NON_NEGATIVE = "{field_name} must be >= 0"
+_ERR_BETWEEN_0_1 = "{field_name} must be between 0 and 1"
+_ERR_REVIEW_THRESHOLD_ORDER = "soft_review_threshold must be <= soft_autolink_threshold"
+_ERR_LIMIT_POSITIVE = "limit must be > 0"
+
+
+class _DedupeValidationError(ValueError):
+    """Raised when dedupe request fields fail validation."""
+
 
 @dataclass(slots=True)
 class _ValidatedRequest:
@@ -115,7 +126,7 @@ def _normalize_text(value: str | None) -> str:
 def _parse_non_empty(value: str, *, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise ValueError(f"{field_name} is required")
+        raise _DedupeValidationError(_ERR_REQUIRED.format(field_name=field_name))
     return normalized
 
 
@@ -123,9 +134,9 @@ def _parse_non_negative_decimal(value: object, *, field_name: str) -> Decimal:
     try:
         parsed = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as exc:
-        raise ValueError(f"{field_name} must be a decimal-compatible value") from exc
+        raise _DedupeValidationError(_ERR_DECIMAL_COMPAT.format(field_name=field_name)) from exc
     if parsed < 0:
-        raise ValueError(f"{field_name} must be >= 0")
+        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name=field_name))
     return parsed
 
 
@@ -140,26 +151,26 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
     hard_date_window_days = int(request.hard_date_window_days)
     soft_candidate_window_days = int(request.soft_candidate_window_days)
     if hard_date_window_days < 0:
-        raise ValueError("hard_date_window_days must be >= 0")
+        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="hard_date_window_days"))
     if soft_candidate_window_days < 0:
-        raise ValueError("soft_candidate_window_days must be >= 0")
+        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="soft_candidate_window_days"))
 
     soft_review_threshold = float(request.soft_review_threshold)
     soft_autolink_threshold = float(request.soft_autolink_threshold)
     if soft_review_threshold < 0 or soft_review_threshold > 1:
-        raise ValueError("soft_review_threshold must be between 0 and 1")
+        raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="soft_review_threshold"))
     if soft_autolink_threshold < 0 or soft_autolink_threshold > 1:
-        raise ValueError("soft_autolink_threshold must be between 0 and 1")
+        raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="soft_autolink_threshold"))
     if soft_review_threshold > soft_autolink_threshold:
-        raise ValueError("soft_review_threshold must be <= soft_autolink_threshold")
+        raise _DedupeValidationError(_ERR_REVIEW_THRESHOLD_ORDER)
 
     pending_posted_window_days = int(request.pending_posted_window_days)
     if pending_posted_window_days < 0:
-        raise ValueError("pending_posted_window_days must be >= 0")
+        raise _DedupeValidationError(_ERR_NON_NEGATIVE.format(field_name="pending_posted_window_days"))
 
     pending_amount_tolerance_pct = float(request.pending_amount_tolerance_pct)
     if pending_amount_tolerance_pct < 0 or pending_amount_tolerance_pct > 1:
-        raise ValueError("pending_amount_tolerance_pct must be between 0 and 1")
+        raise _DedupeValidationError(_ERR_BETWEEN_0_1.format(field_name="pending_amount_tolerance_pct"))
 
     pending_amount_tolerance_abs = _parse_non_negative_decimal(
         request.pending_amount_tolerance_abs,
@@ -168,7 +179,7 @@ def _validate_request(request: TxnDedupeMatchRequest) -> _ValidatedRequest:
 
     limit = int(request.limit)
     if limit <= 0:
-        raise ValueError("limit must be > 0")
+        raise _DedupeValidationError(_ERR_LIMIT_POSITIVE)
 
     return _ValidatedRequest(
         actor=actor,
@@ -761,10 +772,12 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                         ordered_right.normalized_statement,
                     ),
                     source_kind_factor=1.0 if ordered_left.source_kind == ordered_right.source_kind else 0.0,
+                    # Pending->posted hard matches are deterministic; sub-factors are audit context only.
                     total_score=1.0,
                     details={
                         "hard_match": True,
                         "pending_posted_link": True,
+                        "subfactors_informational": True,
                         "date_delta_days": pending_posted_eval.date_delta_days,
                         "amount_delta": str(pending_posted_eval.amount_delta),
                         "amount_tolerance": str(pending_posted_eval.amount_tolerance),
@@ -899,7 +912,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                     reason=validated.reason,
                     session=session,
                 )
-            if existing_decision != candidate.decision:
+            if existing_state is not None and existing_decision != candidate.decision:
                 _record_candidate_event(
                     candidate_id=candidate.id,
                     event_type=_CANDIDATE_DECISION_CHANGED_EVENT_TYPE,
