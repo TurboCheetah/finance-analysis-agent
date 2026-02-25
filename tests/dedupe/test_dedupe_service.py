@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from finance_analysis_agent.dedupe import TxnDedupeMatchRequest, txn_dedupe_match
 from finance_analysis_agent.db.models import Account, DedupeCandidate, Merchant, ReviewItem, Transaction
-from finance_analysis_agent.review_queue.types import ReviewSource
+from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
 
@@ -256,3 +256,108 @@ def test_rerun_is_idempotent_for_existing_hard_candidate(db_session: Session) ->
     assert second.hard_auto_linked == 1
     assert second.skipped_existing == 1
     assert total_candidates == 1
+
+
+def test_autolink_resolves_existing_active_dedupe_review_item(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-resolve-a",
+        posted_date=date(2026, 1, 2),
+        amount="25.00",
+        original_statement="STREAMING SERVICE",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-resolve-b",
+        posted_date=date(2026, 1, 3),
+        amount="25.00",
+        original_statement="streaming service",
+    )
+    db_session.add(
+        DedupeCandidate(
+            id="dc-existing-open",
+            txn_a_id="txn-resolve-a",
+            txn_b_id="txn-resolve-b",
+            score=0.81,
+            decision=None,
+            reason_json={"seed": True},
+            created_at=utcnow(),
+            decided_at=None,
+        )
+    )
+    db_session.add(
+        ReviewItem(
+            id="ri-existing-open",
+            item_type="dedupe_candidate_suggestion",
+            ref_table="dedupe_candidates",
+            ref_id="dc-existing-open",
+            reason_code="dedupe.soft_match",
+            confidence=0.81,
+            status=ReviewItemStatus.TO_REVIEW.value,
+            source=ReviewSource.DEDUPE.value,
+            assigned_to="triager",
+            payload_json={"seed": True},
+            created_at=utcnow(),
+            resolved_at=None,
+        )
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="review-bot-fix",
+            reason="auto-link now deterministic",
+            scope_transaction_ids=["txn-resolve-a", "txn-resolve-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    candidate = db_session.get(DedupeCandidate, "dc-existing-open")
+    review_item = db_session.get(ReviewItem, "ri-existing-open")
+    assert result.hard_auto_linked == 1
+    assert candidate is not None and candidate.decision == "duplicate"
+    assert review_item is not None
+    assert review_item.status == ReviewItemStatus.RESOLVED.value
+    assert review_item.resolved_at is not None
+    assert isinstance(review_item.payload_json, dict)
+    assert review_item.payload_json["resolution"]["actor"] == "review-bot-fix"
+    assert review_item.payload_json["resolution"]["reason"] == "auto-link now deterministic"
+
+
+def test_soft_score_details_align_with_canonical_txn_order(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_transaction(
+        db_session,
+        "txn-z-order",
+        posted_date=date(2026, 1, 1),
+        amount="42.10",
+        original_statement="LEFT PAYEE STORE",
+    )
+    _seed_transaction(
+        db_session,
+        "txn-a-order",
+        posted_date=date(2026, 1, 2),
+        amount="42.50",
+        original_statement="RIGHT PAYEE STORE",
+    )
+    db_session.flush()
+
+    result = txn_dedupe_match(
+        TxnDedupeMatchRequest(
+            actor="tester",
+            reason="check detail ordering",
+            soft_review_threshold=0.60,
+            scope_transaction_ids=["txn-z-order", "txn-a-order"],
+        ),
+        db_session,
+    )
+
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.classification == "soft"
+    score_breakdown = candidate.score_breakdown
+    assert score_breakdown is not None
+    assert score_breakdown.details["left_payee"] == "right payee store"
+    assert score_breakdown.details["right_payee"] == "left payee store"

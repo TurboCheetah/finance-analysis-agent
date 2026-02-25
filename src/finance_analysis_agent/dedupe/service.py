@@ -8,7 +8,8 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.dedupe.types import (
@@ -295,48 +296,8 @@ def _fetch_transactions(validated: _ValidatedRequest, session: Session) -> list[
     return transactions
 
 
-def _existing_candidate_map(transaction_ids: list[str], session: Session) -> dict[tuple[str, str], DedupeCandidate]:
-    if len(transaction_ids) < 2:
-        return {}
-
-    rows = session.scalars(
-        select(DedupeCandidate)
-        .where(
-            DedupeCandidate.txn_a_id.in_(transaction_ids),
-            DedupeCandidate.txn_b_id.in_(transaction_ids),
-        )
-        .order_by(DedupeCandidate.created_at.asc(), DedupeCandidate.id.asc())
-    ).all()
-
-    result: dict[tuple[str, str], DedupeCandidate] = {}
-    for row in rows:
-        result.setdefault(_pair_key(row.txn_a_id, row.txn_b_id), row)
-    return result
-
-
-def _active_review_map(candidate_ids: list[str], session: Session) -> dict[str, ReviewItem]:
-    if not candidate_ids:
-        return {}
-    rows = session.scalars(
-        select(ReviewItem)
-        .where(
-            ReviewItem.ref_table == _SOFT_REVIEW_REF_TABLE,
-            ReviewItem.ref_id.in_(candidate_ids),
-            ReviewItem.source == ReviewSource.DEDUPE.value,
-            ReviewItem.status.in_(sorted(_ACTIVE_REVIEW_STATUSES)),
-        )
-        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
-    ).all()
-
-    result: dict[str, ReviewItem] = {}
-    for row in rows:
-        result.setdefault(row.ref_id, row)
-    return result
-
-
 def _upsert_candidate(
     *,
-    existing: DedupeCandidate | None,
     pair_key: tuple[str, str],
     score: float,
     decision: str | None,
@@ -344,26 +305,33 @@ def _upsert_candidate(
     session: Session,
 ) -> tuple[DedupeCandidate, bool]:
     now = utcnow()
-    score_changed = False
-    if existing is not None:
-        if abs(existing.score - score) > 1e-9:
-            existing.score = score
-            score_changed = True
+    decided_at = now if decision is not None else None
+    if decision is None:
+        decided_at_update_expr = None
+    else:
+        decided_at_update_expr = case(
+            (
+                DedupeCandidate.decision.is_distinct_from(decision),
+                decided_at,
+            ),
+            (
+                DedupeCandidate.decided_at.is_(None),
+                decided_at,
+            ),
+            else_=DedupeCandidate.decided_at,
+        )
 
-        decision_changed = existing.decision != decision
-        reason_changed = (existing.reason_json or {}) != reason_json
-        if decision_changed:
-            existing.decision = decision
-            existing.decided_at = now if decision is not None else None
-        elif score_changed and decision is not None and existing.decided_at is None:
-            existing.decided_at = now
-        if reason_changed:
-            existing.reason_json = reason_json
+    update_conditions = [
+        DedupeCandidate.score != score,
+        DedupeCandidate.decision.is_distinct_from(decision),
+        DedupeCandidate.reason_json != reason_json,
+    ]
+    if decision is None:
+        update_conditions.append(DedupeCandidate.decided_at.is_not(None))
+    else:
+        update_conditions.append(DedupeCandidate.decided_at.is_(None))
 
-        was_unchanged = not (score_changed or decision_changed or reason_changed)
-        return existing, was_unchanged
-
-    candidate = DedupeCandidate(
+    insert_stmt = sqlite_insert(DedupeCandidate).values(
         id=str(uuid4()),
         txn_a_id=pair_key[0],
         txn_b_id=pair_key[1],
@@ -371,10 +339,96 @@ def _upsert_candidate(
         decision=decision,
         reason_json=reason_json,
         created_at=now,
-        decided_at=now if decision is not None else None,
+        decided_at=decided_at,
     )
-    session.add(candidate)
+    upsert_stmt = (
+        insert_stmt.on_conflict_do_update(
+            index_elements=[DedupeCandidate.txn_a_id, DedupeCandidate.txn_b_id],
+            set_={
+                "score": score,
+                "decision": decision,
+                "reason_json": reason_json,
+                "decided_at": decided_at_update_expr,
+            },
+            where=or_(*update_conditions),
+        )
+        .returning(DedupeCandidate.id)
+    )
+    candidate_id = session.scalar(upsert_stmt)
+    if candidate_id is None:
+        candidate_id = session.scalar(
+            select(DedupeCandidate.id)
+            .where(
+                DedupeCandidate.txn_a_id == pair_key[0],
+                DedupeCandidate.txn_b_id == pair_key[1],
+            )
+            .limit(1)
+        )
+        if candidate_id is None:
+            raise RuntimeError(f"Failed to resolve DedupeCandidate for pair {pair_key}")
+        candidate = session.get(DedupeCandidate, candidate_id)
+        if candidate is None:
+            raise RuntimeError(f"Failed to load DedupeCandidate {candidate_id}")
+        return candidate, True
+
+    candidate = session.get(DedupeCandidate, candidate_id)
+    if candidate is None:
+        raise RuntimeError(f"Failed to load DedupeCandidate {candidate_id}")
     return candidate, False
+
+
+def _get_active_review_item(
+    *,
+    candidate_id: str,
+    active_reviews_by_candidate_id: dict[str, ReviewItem | None],
+    session: Session,
+) -> ReviewItem | None:
+    if candidate_id in active_reviews_by_candidate_id:
+        return active_reviews_by_candidate_id[candidate_id]
+
+    review_item = session.scalar(
+        select(ReviewItem)
+        .where(
+            ReviewItem.ref_table == _SOFT_REVIEW_REF_TABLE,
+            ReviewItem.ref_id == candidate_id,
+            ReviewItem.source == ReviewSource.DEDUPE.value,
+            ReviewItem.status.in_(sorted(_ACTIVE_REVIEW_STATUSES)),
+        )
+        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
+        .limit(1)
+    )
+    active_reviews_by_candidate_id[candidate_id] = review_item
+    return review_item
+
+
+def _close_active_review_item_for_autolink(
+    *,
+    candidate_id: str,
+    actor: str,
+    reason: str,
+    active_reviews_by_candidate_id: dict[str, ReviewItem | None],
+    session: Session,
+) -> None:
+    review_item = _get_active_review_item(
+        candidate_id=candidate_id,
+        active_reviews_by_candidate_id=active_reviews_by_candidate_id,
+        session=session,
+    )
+    if review_item is None:
+        return
+
+    now = utcnow()
+    payload_json = dict(review_item.payload_json) if isinstance(review_item.payload_json, dict) else {}
+    payload_json["resolution"] = {
+        "status": "auto_resolved_duplicate",
+        "actor": actor,
+        "reason": reason,
+        "resolved_at": now.isoformat(),
+    }
+    review_item.payload_json = payload_json
+    review_item.status = ReviewItemStatus.RESOLVED.value
+    review_item.resolved_at = now
+    active_reviews_by_candidate_id[candidate_id] = None
 
 
 def _ensure_soft_review_item(
@@ -386,7 +440,7 @@ def _ensure_soft_review_item(
     score_breakdown: DedupeScoreBreakdown,
     actor: str,
     reason: str,
-    active_reviews_by_candidate_id: dict[str, ReviewItem],
+    active_reviews_by_candidate_id: dict[str, ReviewItem | None],
     session: Session,
 ) -> ReviewItem:
     now = utcnow()
@@ -410,7 +464,11 @@ def _ensure_soft_review_item(
         },
     }
 
-    existing_review = active_reviews_by_candidate_id.get(candidate.id)
+    existing_review = _get_active_review_item(
+        candidate_id=candidate.id,
+        active_reviews_by_candidate_id=active_reviews_by_candidate_id,
+        session=session,
+    )
     if existing_review is not None:
         existing_review.confidence = score
         existing_review.payload_json = payload
@@ -451,12 +509,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
             candidates=[],
         )
 
-    transaction_ids = [transaction.id for transaction in transactions]
-    existing_candidates_by_pair = _existing_candidate_map(transaction_ids, session)
-    active_reviews_by_candidate_id = _active_review_map(
-        [candidate.id for candidate in existing_candidates_by_pair.values()],
-        session,
-    )
+    active_reviews_by_candidate_id: dict[str, ReviewItem | None] = {}
 
     hard_auto_linked = 0
     soft_queued = 0
@@ -494,7 +547,10 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                     amount_factor=1.0,
                     date_factor=1.0,
                     merchant_payee_factor=1.0,
-                    statement_factor=_jaccard_similarity(left.normalized_statement, right.normalized_statement),
+                    statement_factor=_jaccard_similarity(
+                        ordered_left.normalized_statement,
+                        ordered_right.normalized_statement,
+                    ),
                     source_kind_factor=1.0 if left.source_kind == right.source_kind else 0.0,
                     total_score=1.0,
                     details={
@@ -507,8 +563,8 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 decision = _DUPLICATE_DECISION
             else:
                 score_breakdown = _compute_soft_score(
-                    left,
-                    right,
+                    ordered_left,
+                    ordered_right,
                     soft_candidate_window_days=validated.soft_candidate_window_days,
                 )
                 score = score_breakdown.total_score
@@ -528,21 +584,33 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 right=ordered_right,
             )
             candidate, was_unchanged = _upsert_candidate(
-                existing=existing_candidates_by_pair.get(pair),
                 pair_key=pair,
                 score=score,
                 decision=decision,
                 reason_json=reason_json,
                 session=session,
             )
-            existing_candidates_by_pair[pair] = candidate
             if was_unchanged:
                 skipped_existing += 1
 
             queued_review_item_id: str | None = None
             if classification == "hard":
+                _close_active_review_item_for_autolink(
+                    candidate_id=candidate.id,
+                    actor=validated.actor,
+                    reason=validated.reason,
+                    active_reviews_by_candidate_id=active_reviews_by_candidate_id,
+                    session=session,
+                )
                 hard_auto_linked += 1
             elif decision == _DUPLICATE_DECISION:
+                _close_active_review_item_for_autolink(
+                    candidate_id=candidate.id,
+                    actor=validated.actor,
+                    reason=validated.reason,
+                    active_reviews_by_candidate_id=active_reviews_by_candidate_id,
+                    session=session,
+                )
                 soft_auto_linked += 1
             else:
                 review_item = _ensure_soft_review_item(

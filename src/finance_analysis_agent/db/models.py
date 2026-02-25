@@ -287,6 +287,7 @@ class DedupeCandidate(Base):
     __table_args__ = (
         Index("ix_dedupe_candidates_decision", "decision"),
         Index("ix_dedupe_candidates_score", "score"),
+        Index("ux_dedupe_candidates_txn_pair", "txn_a_id", "txn_b_id", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
