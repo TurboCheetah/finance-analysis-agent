@@ -359,3 +359,198 @@ def test_bulk_reject_suggestion_sets_rejected_without_transaction_mutation(db_se
     assert review_item is not None and review_item.status == ReviewItemStatus.REJECTED.value
     assert transaction is not None and transaction.category_id == "cat-old"
     assert transaction_events == []
+
+
+def test_bulk_assign_and_unassign_update_assignee_and_emit_events(db_session: Session) -> None:
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-assign-1",
+        ref_table="transactions",
+        ref_id="txn-assign-1",
+        reason_code="rule.needs_review",
+        source=ReviewSource.RULES.value,
+    )
+    db_session.flush()
+
+    assign_result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.ASSIGN,
+            review_item_ids=["ri-assign-1"],
+            actor="reviewer",
+            reason="assign queue item",
+            assignee="alice",
+        ),
+        db_session,
+    )
+    review_item = db_session.get(ReviewItem, "ri-assign-1")
+    assign_events = db_session.scalars(
+        select(ReviewItemEvent)
+        .where(ReviewItemEvent.review_item_id == "ri-assign-1")
+        .order_by(ReviewItemEvent.created_at.asc())
+    ).all()
+
+    assert assign_result.updated == 1
+    assert assign_result.failed == 0
+    assert assign_result.skipped == 0
+    assert review_item is not None and review_item.assigned_to == "alice"
+    assert review_item.status == ReviewItemStatus.TO_REVIEW.value
+    assert any(event.event_type == "assignment_changed" for event in assign_events)
+    assert any(event.event_type == "bulk_action_applied" for event in assign_events)
+
+    unassign_result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.UNASSIGN,
+            review_item_ids=["ri-assign-1"],
+            actor="reviewer",
+            reason="unassign queue item",
+        ),
+        db_session,
+    )
+    review_item = db_session.get(ReviewItem, "ri-assign-1")
+    all_events = db_session.scalars(
+        select(ReviewItemEvent)
+        .where(ReviewItemEvent.review_item_id == "ri-assign-1")
+        .order_by(ReviewItemEvent.created_at.asc())
+    ).all()
+
+    assert unassign_result.updated == 1
+    assert unassign_result.failed == 0
+    assert unassign_result.skipped == 0
+    assert review_item is not None and review_item.assigned_to is None
+    assert sum(1 for event in all_events if event.event_type == "assignment_changed") == 2
+    assert sum(1 for event in all_events if event.event_type == "bulk_action_applied") == 2
+
+
+def test_bulk_assign_and_unassign_skip_noop_paths(db_session: Session) -> None:
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-assign-skip",
+        ref_table="transactions",
+        ref_id="txn-assign-skip",
+        reason_code="rule.needs_review",
+        source=ReviewSource.RULES.value,
+    )
+    db_session.flush()
+    review_item = db_session.get(ReviewItem, "ri-assign-skip")
+    assert review_item is not None
+    review_item.assigned_to = "alice"
+    db_session.flush()
+
+    assign_result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.ASSIGN,
+            review_item_ids=["ri-assign-skip"],
+            actor="reviewer",
+            reason="assign noop",
+            assignee="alice",
+        ),
+        db_session,
+    )
+    assert assign_result.updated == 0
+    assert assign_result.failed == 0
+    assert assign_result.skipped == 1
+    assert assign_result.item_outcomes[0].message is not None
+
+    review_item.assigned_to = None
+    db_session.flush()
+    unassign_result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.UNASSIGN,
+            review_item_ids=["ri-assign-skip"],
+            actor="reviewer",
+            reason="unassign noop",
+        ),
+        db_session,
+    )
+    assert unassign_result.updated == 0
+    assert unassign_result.failed == 0
+    assert unassign_result.skipped == 1
+    assert unassign_result.item_outcomes[0].message is not None
+
+
+def test_bulk_mark_in_progress_updates_and_skips_existing(db_session: Session) -> None:
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-progress-1",
+        ref_table="transactions",
+        ref_id="txn-progress-1",
+        reason_code="rule.needs_review",
+        source=ReviewSource.RULES.value,
+        status=ReviewItemStatus.TO_REVIEW.value,
+    )
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-progress-2",
+        ref_table="transactions",
+        ref_id="txn-progress-2",
+        reason_code="rule.needs_review",
+        source=ReviewSource.RULES.value,
+        status=ReviewItemStatus.IN_PROGRESS.value,
+    )
+    db_session.flush()
+
+    result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.MARK_IN_PROGRESS,
+            review_item_ids=["ri-progress-1", "ri-progress-2"],
+            actor="reviewer",
+            reason="start triage",
+        ),
+        db_session,
+    )
+
+    first = db_session.get(ReviewItem, "ri-progress-1")
+    second = db_session.get(ReviewItem, "ri-progress-2")
+    first_events = db_session.scalars(
+        select(ReviewItemEvent).where(ReviewItemEvent.review_item_id == "ri-progress-1")
+    ).all()
+    second_events = db_session.scalars(
+        select(ReviewItemEvent).where(ReviewItemEvent.review_item_id == "ri-progress-2")
+    ).all()
+
+    assert result.updated == 1
+    assert result.failed == 0
+    assert result.skipped == 1
+    assert first is not None and first.status == ReviewItemStatus.IN_PROGRESS.value
+    assert second is not None and second.status == ReviewItemStatus.IN_PROGRESS.value
+    assert any(event.event_type == "status_transition" for event in first_events)
+    assert any(event.event_type == "bulk_action_applied" for event in first_events)
+    assert any(event.event_type == "bulk_action_skipped" for event in second_events)
+
+
+def test_bulk_recategorize_fails_when_payload_json_is_non_object(db_session: Session) -> None:
+    _seed_category(db_session, "cat-new", "New")
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-bad-payload",
+        ref_table="run_metadata",
+        ref_id="run-1",
+        reason_code="categorize.low_confidence",
+        source=ReviewSource.CATEGORIZE.value,
+        payload_json=["not", "an", "object"],  # type: ignore[arg-type]
+    )
+    db_session.flush()
+
+    result = bulk_triage(
+        BulkTriageRequest(
+            action=BulkActionType.RECATEGORIZE,
+            review_item_ids=["ri-bad-payload"],
+            actor="reviewer",
+            reason="invalid payload shape",
+            category_id="cat-new",
+        ),
+        db_session,
+    )
+
+    review_item = db_session.get(ReviewItem, "ri-bad-payload")
+    review_events = db_session.scalars(
+        select(ReviewItemEvent).where(ReviewItemEvent.review_item_id == "ri-bad-payload")
+    ).all()
+
+    assert result.updated == 0
+    assert result.failed == 1
+    assert result.skipped == 0
+    assert result.item_outcomes[0].message is not None
+    assert "JSON object" in result.item_outcomes[0].message
+    assert review_item is not None and review_item.status == ReviewItemStatus.TO_REVIEW.value
+    assert any(event.event_type == "bulk_action_failed" for event in review_events)

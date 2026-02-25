@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Category, DedupeCandidate, ReviewItem, ReviewItemEvent
@@ -154,6 +155,14 @@ def _record_review_event(
     )
 
 
+def _safe_refresh_review_item(review_item: ReviewItem, session: Session) -> None:
+    try:
+        session.refresh(review_item)
+    except SQLAlchemyError:
+        # Best-effort refresh so failure handling can still log and return an outcome.
+        return
+
+
 def _set_status(review_item: ReviewItem, target_status: ReviewItemStatus) -> None:
     review_item.status = target_status.value
     if target_status in {ReviewItemStatus.RESOLVED, ReviewItemStatus.REJECTED}:
@@ -162,11 +171,22 @@ def _set_status(review_item: ReviewItem, target_status: ReviewItemStatus) -> Non
         review_item.resolved_at = None
 
 
+def _review_payload_as_object_or_none(review_item: ReviewItem) -> dict[str, Any] | None:
+    payload = review_item.payload_json
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("Review item payload must be a JSON object")
+    return payload
+
+
 def _resolve_transaction_id(review_item: ReviewItem) -> str | None:
     if review_item.ref_table == "transactions":
         return review_item.ref_id
 
-    payload = review_item.payload_json or {}
+    payload = _review_payload_as_object_or_none(review_item)
+    if payload is None:
+        return None
     transaction_id = payload.get("transaction_id")
     if isinstance(transaction_id, str) and transaction_id.strip():
         return transaction_id.strip()
@@ -177,7 +197,9 @@ def _resolve_dedupe_candidate_id(review_item: ReviewItem) -> str | None:
     if review_item.ref_table == "dedupe_candidates":
         return review_item.ref_id
 
-    payload = review_item.payload_json or {}
+    payload = _review_payload_as_object_or_none(review_item)
+    if payload is None:
+        return None
     candidate_id = payload.get("dedupe_candidate_id")
     if isinstance(candidate_id, str) and candidate_id.strip():
         return candidate_id.strip()
@@ -185,11 +207,9 @@ def _resolve_dedupe_candidate_id(review_item: ReviewItem) -> str | None:
 
 
 def _resolve_suggestion_payload(review_item: ReviewItem) -> dict[str, Any]:
-    payload = review_item.payload_json
+    payload = _review_payload_as_object_or_none(review_item)
     if payload is None:
         return {}
-    if not isinstance(payload, dict):
-        raise ValueError("Review item payload must be a JSON object")
 
     if isinstance(payload.get("suggestion"), dict):
         return payload["suggestion"]
@@ -388,10 +408,14 @@ def _apply_action_to_item(
     if action == BulkActionType.ASSIGN:
         if context.assignee is None:
             raise ValueError("assignee is required for assign")
+        if review_item.assigned_to == context.assignee:
+            raise _SkipItemAction("review item is already assigned to that user")
         review_item.assigned_to = context.assignee
         return {"assignee": review_item.assigned_to}
 
     if action == BulkActionType.UNASSIGN:
+        if review_item.assigned_to is None:
+            raise _SkipItemAction("review item is already unassigned")
         review_item.assigned_to = None
         return {"assignee": None}
 
@@ -508,7 +532,7 @@ def bulk_triage(request: BulkTriageRequest, session: Session) -> BulkTriageResul
                 )
             )
         except _SkipItemAction as exc:
-            session.refresh(review_item)
+            _safe_refresh_review_item(review_item, session)
             with session.begin_nested():
                 _record_review_event(
                     review_item_id=review_item.id,
@@ -531,8 +555,8 @@ def bulk_triage(request: BulkTriageRequest, session: Session) -> BulkTriageResul
                     message=str(exc),
                 )
             )
-        except Exception as exc:
-            session.refresh(review_item)
+        except (ValueError, SQLAlchemyError) as exc:
+            _safe_refresh_review_item(review_item, session)
             with session.begin_nested():
                 _record_review_event(
                     review_item_id=review_item.id,
