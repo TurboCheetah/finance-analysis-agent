@@ -422,7 +422,7 @@ Research anchors:
 - [x] TUR-33: Build immutable transaction event trail + provenance API
 - [x] TUR-34: Define PDF subagent contract + orchestrator handoff protocol
 - [x] TUR-35: Implement layered PDF extraction pipeline (heuristics -> table assist -> OCR fallback)
-- [ ] TUR-36: Create PDF fixture pack + confidence thresholds + review routing
+- [x] TUR-36: Create PDF fixture pack + confidence thresholds + review routing
 - [ ] TUR-37: Implement deterministic rules engine (ordered matchers/actions + dry-run)
 - [ ] TUR-38: Build Review Queue service with bulk triage workflows
 - [ ] TUR-39: Add explainable categorize_suggest service (optional heuristic/LLM-assisted)
@@ -436,7 +436,7 @@ Research anchors:
 - [ ] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-36.
+Next issue in strict sequence: TUR-37.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.

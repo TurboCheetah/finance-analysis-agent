@@ -1,0 +1,35 @@
+{
+  "name": "chime_non_tabular",
+  "template_hint": "chime_non_tabular",
+  "metadata": {
+    "statement_year": 2026,
+    "currency": "USD",
+    "issuer": "chime"
+  },
+  "text_pages": [
+    "Chime Spending Account Statement\n01/02 Coffee Shop -4.25\n01/03 Grocery Store -18.00\n01/04 Payroll Deposit 500.00"
+  ],
+  "expected_rows": [
+    {
+      "posted_date": "2026-01-02",
+      "amount": "-4.25",
+      "currency": "USD",
+      "original_statement": "Coffee Shop",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-03",
+      "amount": "-18.00",
+      "currency": "USD",
+      "original_statement": "Grocery Store",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-04",
+      "amount": "500.00",
+      "currency": "USD",
+      "original_statement": "Payroll Deposit",
+      "page_no": 1
+    }
+  ]
+}
