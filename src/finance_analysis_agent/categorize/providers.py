@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.categorize.types import CategorizeSuggestRequest
+from finance_analysis_agent.categorize.utils import normalize_scope_ids
 from finance_analysis_agent.db.models import Transaction
 
 DEFAULT_PROVIDER_NAME = "heuristic_v1"
@@ -20,6 +22,7 @@ _STATEMENT_WEIGHT = 0.25
 _RECENCY_WEIGHT = 0.10
 _STATEMENT_SIMILARITY_MIN = 0.2
 _MIN_CONFIDENCE = 0.2
+_DEFAULT_HISTORY_LIMIT = 5000
 _STOPWORDS = {
     "payment",
     "purchase",
@@ -56,11 +59,6 @@ class SuggestionProvider(Protocol):
         """Return suggestion candidates for uncategorized transactions."""
 
 
-def _normalize_scope_ids(scope_transaction_ids: list[str]) -> list[str]:
-    normalized = {transaction_id.strip() for transaction_id in scope_transaction_ids if transaction_id.strip()}
-    return sorted(normalized)
-
-
 def _tokenize(value: str | None) -> set[str]:
     if not value:
         return set()
@@ -93,7 +91,8 @@ class HeuristicSuggestionProvider:
     name = DEFAULT_PROVIDER_NAME
 
     def suggest(self, request: CategorizeSuggestRequest, session: Session) -> ProviderSuggestResult:
-        scope_ids = _normalize_scope_ids(request.scope_transaction_ids)
+        scope_ids = normalize_scope_ids(request.scope_transaction_ids)
+        history_limit = request.history_limit if request.history_limit > 0 else _DEFAULT_HISTORY_LIMIT
 
         target_stmt = select(Transaction).where(Transaction.category_id.is_(None))
         if not request.include_pending:
@@ -106,16 +105,26 @@ class HeuristicSuggestionProvider:
         if not targets:
             return ProviderSuggestResult()
 
+        account_ids = sorted({target.account_id for target in targets})
         history_stmt = select(Transaction).where(Transaction.category_id.is_not(None))
+        history_stmt = history_stmt.where(Transaction.account_id.in_(account_ids))
         if not request.include_pending:
             history_stmt = history_stmt.where(Transaction.pending_status == "posted")
-        history_stmt = history_stmt.order_by(Transaction.posted_date.asc(), Transaction.id.asc())
-        history = session.scalars(history_stmt).all()
+        history_stmt = history_stmt.order_by(Transaction.posted_date.desc(), Transaction.id.desc()).limit(history_limit)
+        history = list(reversed(session.scalars(history_stmt).all()))
 
         skipped = Counter()
         if not history:
             skipped["no_categorized_history"] = len(targets)
             return ProviderSuggestResult(skipped=dict(skipped))
+
+        history_tokens_by_id: dict[str, set[str]] = {}
+        history_dates_by_category: dict[str, list] = defaultdict(list)
+        for row in history:
+            if row.category_id is not None and row.posted_date is not None:
+                history_dates_by_category[row.category_id].append(row.posted_date)
+            if row.category_id is not None and row.original_statement:
+                history_tokens_by_id[row.id] = _tokenize(row.original_statement)
 
         suggestions: list[ProviderSuggestion] = []
 
@@ -154,7 +163,10 @@ class HeuristicSuggestionProvider:
                 for row in history:
                     if row.id == target.id or row.category_id is None or not row.original_statement:
                         continue
-                    similarity = _jaccard_similarity(target_tokens, _tokenize(row.original_statement))
+                    row_tokens = history_tokens_by_id.get(row.id)
+                    if not row_tokens:
+                        continue
+                    similarity = _jaccard_similarity(target_tokens, row_tokens)
                     if similarity > statement_similarity_by_category.get(row.category_id, 0.0):
                         statement_similarity_by_category[row.category_id] = similarity
 
@@ -181,11 +193,7 @@ class HeuristicSuggestionProvider:
                 category_scores.items(),
                 key=lambda item: (-item[1], item[0]),
             )[0][0]
-            winning_history_dates = [
-                row.posted_date
-                for row in history
-                if row.category_id == winning_category and row.posted_date is not None
-            ]
+            winning_history_dates = history_dates_by_category.get(winning_category, [])
             if winning_history_dates:
                 recent_date = max(winning_history_dates)
                 day_delta = abs((target.posted_date - recent_date).days)

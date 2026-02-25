@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from finance_analysis_agent.categorize.types import (
     SuggestionMetricsRequest,
     SuggestionMetricsResult,
 )
+from finance_analysis_agent.categorize.utils import normalize_scope_ids
 from finance_analysis_agent.db.models import ReviewItem, ReviewItemEvent
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
@@ -44,17 +46,23 @@ _SUGGESTION_REF_TABLE = "transactions"
 _SUGGESTION_KIND_TRANSACTION_CATEGORY = "transaction_category"
 
 
+@dataclass(slots=True)
+class _ValidatedRequest:
+    actor: str
+    reason: str
+    provider: str
+    confidence_threshold: float
+    history_limit: int
+    limit: int
+    scope_transaction_ids: list[str]
+
+
 def _normalize_for_hash(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _normalize_scope_ids(scope_transaction_ids: list[str]) -> list[str]:
-    normalized = {transaction_id.strip() for transaction_id in scope_transaction_ids if transaction_id.strip()}
-    return sorted(normalized)
-
-
-def _validate_request(request: CategorizeSuggestRequest) -> tuple[str, str, str, float, int, list[str]]:
+def _validate_request(request: CategorizeSuggestRequest) -> _ValidatedRequest:
     actor = request.actor.strip()
     if not actor:
         raise ValueError("actor is required")
@@ -68,10 +76,22 @@ def _validate_request(request: CategorizeSuggestRequest) -> tuple[str, str, str,
     if threshold < 0 or threshold > 1:
         raise ValueError("confidence_threshold must be between 0 and 1")
 
+    history_limit = int(request.history_limit)
+    if history_limit <= 0:
+        raise ValueError("history_limit must be > 0")
+
     if request.limit <= 0:
         raise ValueError("limit must be > 0")
 
-    return actor, reason, provider, float(threshold), int(request.limit), _normalize_scope_ids(request.scope_transaction_ids)
+    return _ValidatedRequest(
+        actor=actor,
+        reason=reason,
+        provider=provider,
+        confidence_threshold=float(threshold),
+        history_limit=history_limit,
+        limit=int(request.limit),
+        scope_transaction_ids=normalize_scope_ids(request.scope_transaction_ids),
+    )
 
 
 def _extract_suggestion_payload(payload: dict[str, object] | None) -> dict[str, object] | None:
@@ -105,6 +125,7 @@ def _start_run(
     *,
     provider: str,
     threshold: float,
+    history_limit: int,
     include_pending: bool,
     limit: int,
     scope_size: int,
@@ -119,6 +140,7 @@ def _start_run(
                 {
                     "provider": provider,
                     "threshold": threshold,
+                    "history_limit": history_limit,
                     "include_pending": include_pending,
                     "limit": limit,
                     "scope_size": scope_size,
@@ -128,6 +150,7 @@ def _start_run(
             diagnostics_json={
                 "provider": provider,
                 "threshold": threshold,
+                "history_limit": history_limit,
                 "phase": "start",
             },
         ),
@@ -210,27 +233,29 @@ def _build_review_payload(
 def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> CategorizeSuggestResult:
     """Generate explainable category suggestions and queue them for review."""
 
-    actor, reason, provider_name, threshold, limit, scope_ids = _validate_request(request)
+    validated = _validate_request(request)
     run_metadata_id = _start_run(
-        provider=provider_name,
-        threshold=threshold,
+        provider=validated.provider,
+        threshold=validated.confidence_threshold,
+        history_limit=validated.history_limit,
         include_pending=request.include_pending,
-        limit=limit,
-        scope_size=len(scope_ids),
+        limit=validated.limit,
+        scope_size=len(validated.scope_transaction_ids),
         session=session,
     )
 
     try:
-        provider = resolve_suggestion_provider(provider_name)
+        provider = resolve_suggestion_provider(validated.provider)
         provider_result = provider.suggest(
             CategorizeSuggestRequest(
-                actor=actor,
-                reason=reason,
-                scope_transaction_ids=scope_ids,
+                actor=validated.actor,
+                reason=validated.reason,
+                scope_transaction_ids=validated.scope_transaction_ids,
                 include_pending=request.include_pending,
-                confidence_threshold=threshold,
-                provider=provider_name,
-                limit=limit,
+                confidence_threshold=validated.confidence_threshold,
+                provider=validated.provider,
+                history_limit=validated.history_limit,
+                limit=validated.limit,
             ),
             session,
         )
@@ -257,7 +282,9 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
             existing_review = active_reviews.get(key)
             if existing_review is None:
                 review_reason_code = (
-                    _REASON_LOW_CONFIDENCE if suggestion.confidence < threshold else _REASON_SUGGESTION
+                    _REASON_LOW_CONFIDENCE
+                    if suggestion.confidence < validated.confidence_threshold
+                    else _REASON_SUGGESTION
                 )
                 existing_review = ReviewItem(
                     id=str(uuid4()),
@@ -271,7 +298,7 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
                     assigned_to=None,
                     payload_json=_build_review_payload(
                         suggestion=suggestion,
-                        provider=provider_name,
+                        provider=validated.provider,
                         generated_at=generation_timestamp,
                     ),
                     created_at=utcnow(),
@@ -280,7 +307,7 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
                 session.add(existing_review)
                 active_reviews[key] = existing_review
 
-            if suggestion.confidence < threshold:
+            if suggestion.confidence < validated.confidence_threshold:
                 low_confidence += 1
             else:
                 high_confidence += 1
@@ -299,8 +326,9 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
 
         queued = len(queued_suggestions)
         diagnostics_json: dict[str, object] = {
-            "provider": provider_name,
-            "threshold": threshold,
+            "provider": validated.provider,
+            "threshold": validated.confidence_threshold,
+            "history_limit": validated.history_limit,
             "generated": generated,
             "queued": queued,
             "low_confidence": low_confidence,
@@ -317,8 +345,8 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
 
         return CategorizeSuggestResult(
             run_metadata_id=run_metadata_id,
-            provider=provider_name,
-            threshold_used=threshold,
+            provider=validated.provider,
+            threshold_used=validated.confidence_threshold,
             generated=generated,
             queued=queued,
             low_confidence=low_confidence,
@@ -327,16 +355,20 @@ def categorize_suggest(request: CategorizeSuggestRequest, session: Session) -> C
             suggestions=queued_suggestions,
         )
     except Exception as exc:
-        _finish_run(
-            run_metadata_id=run_metadata_id,
-            status="failed",
-            diagnostics_json={
-                "provider": provider_name,
-                "threshold": threshold,
-                "error": str(exc),
-            },
-            session=session,
-        )
+        try:
+            _finish_run(
+                run_metadata_id=run_metadata_id,
+                status="failed",
+                diagnostics_json={
+                    "provider": validated.provider,
+                    "threshold": validated.confidence_threshold,
+                    "history_limit": validated.history_limit,
+                    "error": str(exc),
+                },
+                session=session,
+            )
+        except Exception:
+            pass
         raise
 
 

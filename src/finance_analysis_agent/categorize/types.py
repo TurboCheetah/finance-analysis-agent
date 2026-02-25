@@ -15,6 +15,7 @@ class CategorizeSuggestRequest:
     include_pending: bool = False
     confidence_threshold: float | None = None
     provider: str = "heuristic_v1"
+    history_limit: int = 5000
     limit: int = 500
 
 
