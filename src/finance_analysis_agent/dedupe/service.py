@@ -340,28 +340,26 @@ def _evaluate_pending_posted_match(
     left_status = _normalized_pending_status(left.pending_status)
     right_status = _normalized_pending_status(right.pending_status)
     statuses = {left_status, right_status}
+    is_pending_posted_pair = statuses == {_PENDING_STATUS, _POSTED_STATUS}
 
     day_delta = abs((left.posted_date - right.posted_date).days)
-    amount_delta = abs(left.amount - right.amount)
-    payee_similarity = _jaccard_similarity(left.normalized_payee, right.normalized_payee)
-    payee_exact = bool(left.normalized_payee and right.normalized_payee and left.normalized_payee == right.normalized_payee)
-
-    max_amount = max(abs(left.amount), abs(right.amount), Decimal("0"))
-    pct_tolerance = max_amount * Decimal(str(validated.pending_amount_tolerance_pct))
-    amount_tolerance = max(validated.pending_amount_tolerance_abs, pct_tolerance)
-
-    is_pending_posted_pair = statuses == {_PENDING_STATUS, _POSTED_STATUS}
     if not is_pending_posted_pair:
         return _PendingPostedMatchEvaluation(
             is_pending_posted_pair=False,
             is_match=False,
             date_delta_days=day_delta,
-            amount_delta=amount_delta,
-            amount_tolerance=amount_tolerance,
-            payee_similarity=payee_similarity,
-            payee_exact=payee_exact,
+            amount_delta=Decimal("0"),
+            amount_tolerance=Decimal("0"),
+            payee_similarity=0.0,
+            payee_exact=False,
         )
 
+    amount_delta = abs(left.amount - right.amount)
+    payee_similarity = _jaccard_similarity(left.normalized_payee, right.normalized_payee)
+    payee_exact = bool(left.normalized_payee and right.normalized_payee and left.normalized_payee == right.normalized_payee)
+    max_amount = max(abs(left.amount), abs(right.amount), Decimal("0"))
+    pct_tolerance = max_amount * Decimal(str(validated.pending_amount_tolerance_pct))
+    amount_tolerance = max(validated.pending_amount_tolerance_abs, pct_tolerance)
     within_date_window = day_delta <= validated.pending_posted_window_days
     within_amount_tolerance = amount_delta <= amount_tolerance
     # Intentionally conservative: _jaccard_similarity returns 0.0 when either side is empty,
@@ -466,12 +464,13 @@ def _upsert_candidate(
     reason_json: dict[str, object],
     clear_decision_when_none: bool,
     session: Session,
-) -> tuple[DedupeCandidate, bool]:
+) -> tuple[DedupeCandidate, bool, bool]:
     now = utcnow()
+    proposed_candidate_id = str(uuid4())
     decided_at = now if decision is not None else None
 
     insert_stmt = sqlite_insert(DedupeCandidate).values(
-        id=str(uuid4()),
+        id=proposed_candidate_id,
         txn_a_id=pair_key[0],
         txn_b_id=pair_key[1],
         score=score,
@@ -561,12 +560,12 @@ def _upsert_candidate(
         candidate = session.get(DedupeCandidate, candidate_id, populate_existing=True)
         if candidate is None:
             raise _DedupePersistenceError.unresolved_candidate(candidate_id)
-        return candidate, True
+        return candidate, True, False
 
     candidate = session.get(DedupeCandidate, candidate_id, populate_existing=True)
     if candidate is None:
         raise _DedupePersistenceError.unresolved_candidate(candidate_id)
-    return candidate, False
+    return candidate, False, candidate.id == proposed_candidate_id
 
 
 def _candidate_state_payload(candidate: DedupeCandidate) -> dict[str, object]:
@@ -956,7 +955,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
             )
             existing_decision = existing_candidate.decision if existing_candidate is not None else None
 
-            candidate, was_unchanged = _upsert_candidate(
+            candidate, was_unchanged, was_created = _upsert_candidate(
                 pair_key=pair,
                 score=score,
                 decision=decision,
@@ -968,7 +967,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                 skipped_existing += 1
 
             candidate_state = _candidate_state_payload(candidate)
-            if existing_state is None:
+            if was_created:
                 _record_candidate_event(
                     candidate_id=candidate.id,
                     event_type=_CANDIDATE_CREATED_EVENT_TYPE,
@@ -978,7 +977,7 @@ def txn_dedupe_match(request: TxnDedupeMatchRequest, session: Session) -> TxnDed
                     reason=validated.reason,
                     session=session,
                 )
-            elif existing_state != candidate_state:
+            elif existing_state is not None and existing_state != candidate_state:
                 _record_candidate_event(
                     candidate_id=candidate.id,
                     event_type=_CANDIDATE_UPDATED_EVENT_TYPE,
