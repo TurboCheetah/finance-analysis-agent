@@ -67,6 +67,29 @@ class _DedupeValidationError(ValueError):
     """Raised when dedupe request fields fail validation."""
 
 
+class _DedupePersistenceError(RuntimeError):
+    """Raised when dedupe persistence operations cannot resolve expected rows."""
+
+    @staticmethod
+    def unresolved_pair(pair_key: tuple[str, str]) -> "_DedupePersistenceError":
+        return _DedupePersistenceError(f"Failed to resolve DedupeCandidate for pair {pair_key}")
+
+    @staticmethod
+    def unresolved_candidate(candidate_id: str) -> "_DedupePersistenceError":
+        return _DedupePersistenceError(f"Failed to load DedupeCandidate {candidate_id}")
+
+    @staticmethod
+    def unresolved_active_review(candidate_id: str) -> "_DedupePersistenceError":
+        return _DedupePersistenceError(
+            "Failed to resolve active dedupe review item after upsert conflict "
+            f"for candidate {candidate_id}"
+        )
+
+    @staticmethod
+    def unresolved_review_item(review_item_id: str) -> "_DedupePersistenceError":
+        return _DedupePersistenceError(f"Failed to load ReviewItem {review_item_id}")
+
+
 @dataclass(slots=True)
 class _ValidatedRequest:
     actor: str
@@ -489,15 +512,15 @@ def _upsert_candidate(
             .limit(1)
         )
         if candidate_id is None:
-            raise RuntimeError(f"Failed to resolve DedupeCandidate for pair {pair_key}")
+            raise _DedupePersistenceError.unresolved_pair(pair_key)
         candidate = session.get(DedupeCandidate, candidate_id, populate_existing=True)
         if candidate is None:
-            raise RuntimeError(f"Failed to load DedupeCandidate {candidate_id}")
+            raise _DedupePersistenceError.unresolved_candidate(candidate_id)
         return candidate, True
 
     candidate = session.get(DedupeCandidate, candidate_id, populate_existing=True)
     if candidate is None:
-        raise RuntimeError(f"Failed to load DedupeCandidate {candidate_id}")
+        raise _DedupePersistenceError.unresolved_candidate(candidate_id)
     return candidate, False
 
 
@@ -677,10 +700,7 @@ def _ensure_soft_review_item(
             session=session,
         )
         if existing_review is None:
-            raise RuntimeError(
-                "Failed to resolve active dedupe review item after upsert conflict "
-                f"for candidate {candidate.id}"
-            )
+            raise _DedupePersistenceError.unresolved_active_review(candidate.id)
         existing_review.reason_code = reason_code
         existing_review.confidence = score
         existing_review.payload_json = payload
@@ -688,7 +708,7 @@ def _ensure_soft_review_item(
 
     review_item = session.get(ReviewItem, review_item_id)
     if review_item is None:
-        raise RuntimeError(f"Failed to load ReviewItem {review_item_id}")
+        raise _DedupePersistenceError.unresolved_review_item(review_item_id)
     active_reviews_by_candidate_id[candidate.id] = review_item
     return review_item
 
