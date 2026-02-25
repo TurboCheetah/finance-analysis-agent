@@ -169,8 +169,12 @@ def parse_statement_pages(
 
             date_match = _DATE_PREFIX_RE.search(line)
             amount_match = _AMOUNT_SUFFIX_RE.search(line)
-            # Candidate filtering already guarantees both matches are present.
-            assert date_match is not None and amount_match is not None
+            if date_match is None or amount_match is None:
+                parse_errors += 1
+                warnings.append(
+                    f"{taxonomy.LAYOUT_SHIFT}: _is_candidate_transaction_line invariant failed for line '{line}'"
+                )
+                continue
 
             date_token = date_match.group(1)
             amount_token = amount_match.group("amount")
