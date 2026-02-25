@@ -9,6 +9,13 @@ from finance_analysis_agent.categorize import (
     categorize_suggest,
     get_suggestion_metrics,
 )
+from finance_analysis_agent.dedupe import (
+    DedupeCandidateResult,
+    DedupeScoreBreakdown,
+    TxnDedupeMatchRequest,
+    TxnDedupeMatchResult,
+    txn_dedupe_match,
+)
 from finance_analysis_agent.rules import (
     RuleApplyResult,
     RuleDiff,
@@ -33,6 +40,8 @@ from finance_analysis_agent.review_queue import (
 __all__ = [
     "CategorizeSuggestRequest",
     "CategorizeSuggestResult",
+    "DedupeCandidateResult",
+    "DedupeScoreBreakdown",
     "RuleApplyResult",
     "RuleDiff",
     "RuleRunMode",
@@ -49,9 +58,12 @@ __all__ = [
     "SuggestionCandidate",
     "SuggestionMetricsRequest",
     "SuggestionMetricsResult",
+    "TxnDedupeMatchRequest",
+    "TxnDedupeMatchResult",
     "apply_rules",
     "bulk_triage",
     "categorize_suggest",
     "get_suggestion_metrics",
     "list_review_items",
+    "txn_dedupe_match",
 ]
