@@ -138,6 +138,8 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "budget_targets",
             "budget_allocations",
             "budget_buckets",
+            "budget_bucket_definitions",
+            "budget_bucket_category_mappings",
             "budget_rollovers",
             "recurrings",
             "recurring_events",

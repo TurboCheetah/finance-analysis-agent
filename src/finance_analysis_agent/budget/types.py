@@ -1,4 +1,4 @@
-"""Typed contracts for zero-based budgeting workflows."""
+"""Typed contracts for budgeting workflows."""
 
 from __future__ import annotations
 
@@ -76,4 +76,73 @@ class BudgetComputeZeroBasedResult:
     underfunded_total: Decimal
     overspent_total: Decimal
     categories: list[BudgetCategorySnapshot] = field(default_factory=list)
+    causes: list[BudgetRunCause] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BudgetBucketPlanInput:
+    bucket_key: str
+    planned_amount: Decimal | str
+    rollover_policy: str | None = None
+
+
+@dataclass(slots=True)
+class BudgetCategoryPlanInput:
+    budget_category_id: str
+    bucket_key: str
+    planned_amount: Decimal | str
+    rollover_policy: str | None = None
+
+
+@dataclass(slots=True)
+class BudgetBucketSnapshot:
+    bucket_definition_id: str
+    bucket_key: str
+    bucket_name: str
+    planned_amount: Decimal
+    actual_amount: Decimal
+    rollover_policy: str
+    rollover_carry: Decimal
+    category_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BudgetCategoryRolloverSnapshot:
+    budget_category_id: str
+    category_id: str
+    bucket_key: str
+    planned_amount: Decimal
+    actual_amount: Decimal
+    rollover_policy: str
+    rollover_carry: Decimal
+
+
+@dataclass(slots=True)
+class BudgetComputeFlexRequest:
+    budget_id: str
+    period_month: str
+    available_cash: Decimal | str
+    actor: str
+    reason: str
+    status: str = "open"
+    bucket_plans: list[BudgetBucketPlanInput] = field(default_factory=list)
+    category_plans: list[BudgetCategoryPlanInput] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BudgetComputeFlexResult:
+    budget_period_id: str
+    budget_id: str
+    period_month: str
+    status: str
+    available_cash: Decimal
+    fixed_planned: Decimal
+    non_monthly_planned: Decimal
+    flex_planned: Decimal
+    assigned_total: Decimal
+    spent_total: Decimal
+    rollover_total: Decimal
+    flex_available: Decimal
+    buckets: list[BudgetBucketSnapshot] = field(default_factory=list)
+    categories: list[BudgetCategoryRolloverSnapshot] = field(default_factory=list)
     causes: list[BudgetRunCause] = field(default_factory=list)

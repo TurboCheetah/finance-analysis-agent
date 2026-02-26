@@ -468,6 +468,7 @@ class BudgetCategory(Base):
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id"), nullable=False)
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"), nullable=False)
     policy_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    rollover_policy: Mapped[str | None] = mapped_column(String)
 
 
 class BudgetTarget(Base):
@@ -495,14 +496,51 @@ class BudgetAllocation(Base):
 
 class BudgetBucket(Base):
     __tablename__ = "budget_buckets"
+    __table_args__ = (
+        Index(
+            "ix_budget_buckets_budget_id_period_month_bucket_definition_id",
+            "budget_id",
+            "period_month",
+            "bucket_definition_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id"), nullable=False)
+    bucket_definition_id: Mapped[str | None] = mapped_column(ForeignKey("budget_bucket_definitions.id"))
     period_month: Mapped[str] = mapped_column(String, nullable=False)
     bucket_name: Mapped[str] = mapped_column(String, nullable=False)
     planned_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     actual_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     rollover_policy: Mapped[str | None] = mapped_column(String)
+
+
+class BudgetBucketDefinition(Base):
+    __tablename__ = "budget_bucket_definitions"
+    __table_args__ = (
+        UniqueConstraint("budget_id", "bucket_key", name="uq_budget_bucket_definitions_budget_id_bucket_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id"), nullable=False)
+    bucket_key: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    rollover_policy: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class BudgetBucketCategoryMapping(Base):
+    __tablename__ = "budget_bucket_category_mappings"
+    __table_args__ = (
+        UniqueConstraint("budget_category_id", name="uq_budget_bucket_category_mappings_budget_category_id"),
+        Index("ix_budget_bucket_category_mappings_bucket_definition_id", "bucket_definition_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    bucket_definition_id: Mapped[str] = mapped_column(
+        ForeignKey("budget_bucket_definitions.id"),
+        nullable=False,
+    )
+    budget_category_id: Mapped[str] = mapped_column(ForeignKey("budget_categories.id"), nullable=False)
 
 
 class BudgetRollover(Base):
