@@ -21,6 +21,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _ALLOWED_BUCKET_KEYS = {"fixed", "non_monthly", "flex"}
+_ALLOWED_ROLLOVER_POLICIES = {"none", "carry_positive", "carry_negative", "carry_both"}
 
 
 def _canonical_bucket_key(raw_name: str | None) -> str | None:
@@ -38,6 +39,17 @@ def _bucket_display_name(bucket_key: str) -> str:
     if bucket_key == "non_monthly":
         return "Non-monthly"
     return bucket_key.replace("_", " ").title()
+
+
+def _canonical_rollover_policy(raw_policy: str | None) -> str | None:
+    if raw_policy is None:
+        return None
+    normalized = str(raw_policy).strip().lower().replace("-", "_").replace(" ", "_")
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    if normalized in _ALLOWED_ROLLOVER_POLICIES:
+        return normalized
+    return None
 
 
 def upgrade() -> None:
@@ -124,10 +136,11 @@ def upgrade() -> None:
         bucket_key = _canonical_bucket_key(row["bucket_name"])
         if bucket_key is None:
             continue
+        canonical_policy = _canonical_rollover_policy(row["rollover_policy"])
         key = (row["budget_id"], bucket_key)
         existing_policy = definition_candidates.get(key)
-        if existing_policy is None and row["rollover_policy"] is not None:
-            definition_candidates[key] = str(row["rollover_policy"])
+        if existing_policy is None and canonical_policy is not None:
+            definition_candidates[key] = canonical_policy
         elif key not in definition_candidates:
             definition_candidates[key] = None
 
