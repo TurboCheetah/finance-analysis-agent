@@ -291,6 +291,10 @@ def _upsert_target_policies(
             },
         )
         session.execute(stmt)
+        if target is not None:
+            # Core upserts bypass ORM state synchronization; ensure the loaded target
+            # instance is refreshed before later reads in this session.
+            session.expire(target)
 
 
 def _resolve_targets_by_budget_category(
@@ -487,19 +491,24 @@ def _sync_budget_allocations(
     for snapshot in snapshots:
         allocation_input = allocation_inputs.get(snapshot.budget_category_id)
         source = allocation_input.source if allocation_input is not None else _ALLOCATION_SOURCE_ENGINE
-        allocation = existing.get(snapshot.budget_category_id)
-        if allocation is None:
-            allocation = BudgetAllocation(
-                id=f"alloc:{budget_period_id}:{snapshot.budget_category_id}",
-                budget_period_id=budget_period_id,
-                budget_category_id=snapshot.budget_category_id,
-                assigned_amount=snapshot.assigned_amount,
-                source=source,
-            )
-            session.add(allocation)
-            continue
-        allocation.assigned_amount = snapshot.assigned_amount
-        allocation.source = source
+        allocation_id = f"alloc:{budget_period_id}:{snapshot.budget_category_id}"
+        stmt = sqlite_insert(BudgetAllocation).values(
+            id=allocation_id,
+            budget_period_id=budget_period_id,
+            budget_category_id=snapshot.budget_category_id,
+            assigned_amount=snapshot.assigned_amount,
+            source=source,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[BudgetAllocation.id],
+            set_={
+                "budget_period_id": budget_period_id,
+                "budget_category_id": snapshot.budget_category_id,
+                "assigned_amount": snapshot.assigned_amount,
+                "source": source,
+            },
+        )
+        session.execute(stmt)
 
     for budget_category_id, allocation in existing.items():
         if budget_category_id not in expected_ids:
@@ -717,6 +726,20 @@ def budget_compute_zero_based(
     overspent_total = _quantize_money(sum((snapshot.overspent for snapshot in snapshots), Decimal("0.00")))
     rollover_total = carry_in_overspent
     to_assign = _quantize_money(validated.available_cash - assigned_total - rollover_total)
+    if to_assign < 0:
+        causes.append(
+            BudgetRunCause(
+                code="to_assign_negative",
+                message=(
+                    "Current period is over-assigned: "
+                    f"available_cash={validated.available_cash}, "
+                    f"assigned_total={assigned_total}, "
+                    f"rollover_total={rollover_total}, "
+                    f"to_assign={to_assign}"
+                ),
+                severity="warning",
+            )
+        )
 
     budget_period = _upsert_budget_period(
         validated=validated,

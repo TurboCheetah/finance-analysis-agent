@@ -310,6 +310,50 @@ def test_budget_compute_zero_based_respects_snoozed_targets(db_session: Session)
     assert snapshot.underfunded == Decimal("0.00")
 
 
+def test_budget_compute_zero_based_uses_updated_target_policy_values_same_run(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-updated-target", name="Updated Target")
+    _seed_budget(db_session, budget_id="budget-target-update")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-updated-target",
+        budget_id="budget-target-update",
+        category_id="cat-updated-target",
+    )
+    _seed_target(
+        db_session,
+        target_id="target-updated-target",
+        budget_category_id="bc-updated-target",
+        amount="100.00",
+        cadence="monthly",
+    )
+    db_session.flush()
+
+    result = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-target-update",
+            period_month="2026-03",
+            available_cash="500.00",
+            actor="budgeter",
+            reason="update target policy and compute",
+            target_policies=[
+                BudgetTargetPolicyInput(
+                    budget_category_id="bc-updated-target",
+                    amount="250.00",
+                    cadence="monthly",
+                    top_up=False,
+                    target_type="scheduled",
+                )
+            ],
+        ),
+        db_session,
+    )
+
+    snapshot = result.categories[0]
+    assert snapshot.target_required == Decimal("250.00")
+    assert snapshot.underfunded == Decimal("250.00")
+
+
 def test_budget_compute_zero_based_supports_every_n_months_cadence(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_category(db_session, category_id="cat-auto", name="Auto")
@@ -470,6 +514,48 @@ def test_budget_compute_zero_based_carries_closed_month_overspending_to_next_to_
     assert rollover is not None
     assert rollover.carry_amount == Decimal("75.00")
     assert any(cause.code == "overspent_carry_applied" for cause in result.causes)
+
+
+def test_budget_compute_zero_based_does_not_carry_overspend_from_open_period(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-util", name="Utilities")
+    _seed_budget(db_session, budget_id="budget-open-prev")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-util",
+        budget_id="budget-open-prev",
+        category_id="cat-util",
+    )
+    db_session.add(
+        BudgetPeriod(
+            id="period-open-prev",
+            budget_id="budget-open-prev",
+            period_month="2026-01",
+            to_assign=Decimal("0.00"),
+            assigned_total=Decimal("100.00"),
+            spent_total=Decimal("200.00"),
+            rollover_total=Decimal("0.00"),
+            status="open",
+        )
+    )
+    db_session.flush()
+
+    result = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-open-prev",
+            period_month="2026-02",
+            available_cash="500.00",
+            actor="budgeter",
+            reason="no carry from open period",
+        ),
+        db_session,
+    )
+
+    assert result.carry_in_overspent == Decimal("0.00")
+    assert result.rollover_total == Decimal("0.00")
+    assert result.to_assign == Decimal("500.00")
 
 
 def test_budget_compute_zero_based_rejects_invalid_period_month(db_session: Session) -> None:
