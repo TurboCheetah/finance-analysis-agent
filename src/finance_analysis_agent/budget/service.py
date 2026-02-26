@@ -385,7 +385,16 @@ def _allocation_map_for_period(*, budget_period_id: str, session: Session) -> di
         .where(BudgetAllocation.budget_period_id == budget_period_id)
         .order_by(BudgetAllocation.budget_category_id.asc(), BudgetAllocation.id.asc())
     ).all()
-    return {allocation.budget_category_id: allocation for allocation in allocations}
+    by_budget_category_id: dict[str, BudgetAllocation] = {}
+    for allocation in allocations:
+        if allocation.budget_category_id in by_budget_category_id:
+            raise ValueError(
+                "Expected at most one BudgetAllocation per budget category in period; "
+                f"found duplicate for period {budget_period_id} and budget_category_id "
+                f"{allocation.budget_category_id}"
+            )
+        by_budget_category_id[allocation.budget_category_id] = allocation
+    return by_budget_category_id
 
 
 def _parse_interval_months(metadata_json: dict[str, object] | None) -> int:
@@ -398,6 +407,11 @@ def _parse_interval_months(metadata_json: dict[str, object] | None) -> int:
         interval_raw = metadata_json["interval_months"]
     elif "every_n_months" in metadata_json:
         interval_raw = metadata_json["every_n_months"]
+    elif metadata_json:
+        raise ValueError(
+            "every_n_months target metadata must include one of: "
+            "months_interval, interval_months, every_n_months"
+        )
     try:
         interval = int(str(interval_raw))
     except (TypeError, ValueError) as exc:

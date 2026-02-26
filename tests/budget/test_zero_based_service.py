@@ -487,6 +487,79 @@ def test_budget_compute_zero_based_top_up_uses_previous_available_balance(db_ses
     assert snapshot.underfunded == Decimal("150.00")
 
 
+def test_budget_compute_zero_based_rejects_duplicate_previous_period_allocations_for_same_category(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-home-dup-prev", name="Home Duplicate Previous")
+    _seed_budget(db_session, budget_id="budget-topup-dup-prev")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-home-dup-prev",
+        budget_id="budget-topup-dup-prev",
+        category_id="cat-home-dup-prev",
+    )
+    _seed_target(
+        db_session,
+        target_id="target-home-dup-prev",
+        budget_category_id="bc-home-dup-prev",
+        amount="500.00",
+        top_up=True,
+    )
+    db_session.add(
+        BudgetPeriod(
+            id="period-dup-prev",
+            budget_id="budget-topup-dup-prev",
+            period_month="2026-01",
+            to_assign=Decimal("0.00"),
+            assigned_total=Decimal("400.00"),
+            spent_total=Decimal("150.00"),
+            rollover_total=Decimal("0.00"),
+            status="open",
+        )
+    )
+    db_session.add(
+        BudgetAllocation(
+            id="alloc-dup-prev-a",
+            budget_period_id="period-dup-prev",
+            budget_category_id="bc-home-dup-prev",
+            assigned_amount=Decimal("200.00"),
+            source="manual",
+        )
+    )
+    db_session.add(
+        BudgetAllocation(
+            id="alloc-dup-prev-b",
+            budget_period_id="period-dup-prev",
+            budget_category_id="bc-home-dup-prev",
+            assigned_amount=Decimal("200.00"),
+            source="manual",
+        )
+    )
+    db_session.flush()
+
+    with pytest.raises(
+        ValueError,
+        match="Expected at most one BudgetAllocation per budget category in period",
+    ):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-topup-dup-prev",
+                period_month="2026-02",
+                available_cash="1000.00",
+                actor="budgeter",
+                reason="duplicate previous allocations",
+                category_allocations=[
+                    BudgetCategoryAllocationInput(
+                        budget_category_id="bc-home-dup-prev",
+                        assigned_amount="100.00",
+                    )
+                ],
+            ),
+            db_session,
+        )
+
+
 def test_budget_compute_zero_based_carries_closed_month_overspending_to_next_to_assign(
     db_session: Session,
 ) -> None:
@@ -845,6 +918,44 @@ def test_budget_compute_zero_based_rejects_every_n_months_zero_interval(db_sessi
                 available_cash="1000.00",
                 actor="budgeter",
                 reason="invalid zero interval",
+            ),
+            db_session,
+        )
+
+
+def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_interval_key(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-target-interval-missing", name="Target Interval Missing")
+    _seed_budget(db_session, budget_id="budget-target-interval-missing")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-target-interval-missing",
+        budget_id="budget-target-interval-missing",
+        category_id="cat-target-interval-missing",
+    )
+    _seed_target(
+        db_session,
+        target_id="target-interval-missing",
+        budget_category_id="bc-target-interval-missing",
+        amount="50.00",
+        cadence="every_n_months",
+        metadata_json={"anchor_month": "2026-01"},
+    )
+    db_session.flush()
+
+    with pytest.raises(
+        ValueError,
+        match="every_n_months target metadata must include one of",
+    ):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-target-interval-missing",
+                period_month="2026-02",
+                available_cash="1000.00",
+                actor="budgeter",
+                reason="missing interval key",
             ),
             db_session,
         )
