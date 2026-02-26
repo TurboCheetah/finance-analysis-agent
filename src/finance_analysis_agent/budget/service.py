@@ -860,15 +860,18 @@ def _upsert_budget_bucket_definitions(
 
 def _sync_budget_bucket_category_mappings(
     *,
+    budget_id: str,
     category_plans: dict[str, _ValidatedCategoryPlan],
     categories_by_id: dict[str, BudgetCategory],
     bucket_definitions_by_key: dict[str, BudgetBucketDefinition],
     session: Session,
 ) -> None:
+    canonical_budget_category_ids: set[str] = set()
     for category_id, plan in category_plans.items():
         category = categories_by_id.get(category_id)
         if category is None:
             raise ValueError(f"Unknown budget_category_id in category_plans: {category_id}")
+        canonical_budget_category_ids.add(category_id)
         bucket_definition = bucket_definitions_by_key[plan.bucket_key]
         if plan.rollover_policy is not None:
             category.rollover_policy = plan.rollover_policy
@@ -880,13 +883,25 @@ def _sync_budget_bucket_category_mappings(
             budget_category_id=category_id,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[BudgetBucketCategoryMapping.id],
+            index_elements=[BudgetBucketCategoryMapping.budget_category_id],
             set_={
                 "bucket_definition_id": bucket_definition.id,
                 "budget_category_id": category_id,
             },
         )
         session.execute(stmt)
+
+    existing = session.scalars(
+        select(BudgetBucketCategoryMapping)
+        .join(
+            BudgetCategory,
+            BudgetCategory.id == BudgetBucketCategoryMapping.budget_category_id,
+        )
+        .where(BudgetCategory.budget_id == budget_id)
+    ).all()
+    for mapping in existing:
+        if mapping.budget_category_id not in canonical_budget_category_ids:
+            session.delete(mapping)
 
 
 def _resolve_bucket_key_for_bucket_row(
@@ -1386,6 +1401,7 @@ def budget_compute_flex(
         session=session,
     )
     _sync_budget_bucket_category_mappings(
+        budget_id=validated.budget_id,
         category_plans=validated.category_plans,
         categories_by_id=categories_by_id,
         bucket_definitions_by_key=bucket_definitions_by_key,
@@ -1405,6 +1421,15 @@ def budget_compute_flex(
         bucket_definitions_by_id=bucket_definitions_by_id,
         session=session,
     )
+    unmapped_budget_category_ids = sorted(
+        budget_category.id
+        for budget_category in budget_categories
+        if budget_category.id not in mapped_bucket_by_budget_category
+    )
+    if unmapped_budget_category_ids:
+        raise ValueError(
+            "Missing bucket mapping for budget_category_id(s): " + ", ".join(unmapped_budget_category_ids)
+        )
 
     category_ids = sorted(category_owner_by_id)
     current_spend_by_category = _ledger_spend_by_category(
@@ -1541,7 +1566,6 @@ def budget_compute_flex(
                 policy=policy,
             )
             category_carry_by_budget_category[budget_category.id] = carry
-            rollover_total += carry
 
     rollover_total = _quantize_money(rollover_total)
     fixed_planned = bucket_planned_by_key["fixed"]
@@ -1605,7 +1629,7 @@ def budget_compute_flex(
             session=session,
         )
 
-    if not mapped_bucket_by_budget_category:
+    if not mapped_bucket_by_budget_category and not budget_categories:
         causes.append(
             BudgetRunCause(
                 code="no_bucket_mappings",

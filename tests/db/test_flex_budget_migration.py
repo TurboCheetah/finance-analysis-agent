@@ -41,6 +41,7 @@ def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_
                         rollover_policy
                     ) VALUES
                         ('bucket-1', 'budget-flex', '2026-02', 'Fixed', 1200.00, 1200.00, 'carry_positive'),
+                        ('bucket-5', 'budget-flex', '2026-03', 'Fixed', 1000.00, 950.00, 'carry_negative'),
                         ('bucket-2', 'budget-flex', '2026-02', 'non-monthly', 300.00, 0.00, 'carry_both'),
                         ('bucket-3', 'budget-flex', '2026-02', 'flex', 600.00, 250.00, 'carry_negative'),
                         ('bucket-4', 'budget-flex', '2026-02', 'legacy_bucket', 10.00, 5.00, 'none')
@@ -96,6 +97,7 @@ def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_
             ("bucket-2", "non_monthly", "bucketdef:budget-flex:non_monthly"),
             ("bucket-3", "flex", "bucketdef:budget-flex:flex"),
             ("bucket-4", "legacy_bucket", None),
+            ("bucket-5", "fixed", "bucketdef:budget-flex:fixed"),
         ]
     finally:
         upgraded_engine.dispose()

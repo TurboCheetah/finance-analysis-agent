@@ -8,7 +8,7 @@ Create Date: 2026-02-26 19:10:00.000000
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -16,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "7e3b4c2d1f90"
-down_revision: Union[str, Sequence[str], None] = "2f6c8a9d1e4b"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "2f6c8a9d1e4b"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 _ALLOWED_BUCKET_KEYS = {"fixed", "non_monthly", "flex"}
 
@@ -113,16 +113,26 @@ def upgrade() -> None:
     existing_buckets = connection.execute(
         sa.text(
             """
-            SELECT DISTINCT budget_id, bucket_name, rollover_policy
+            SELECT id, budget_id, bucket_name, rollover_policy
             FROM budget_buckets
+            ORDER BY budget_id ASC, id ASC
             """
         )
     ).mappings()
+    definition_candidates: dict[tuple[str, str], str | None] = {}
     for row in existing_buckets:
         bucket_key = _canonical_bucket_key(row["bucket_name"])
         if bucket_key is None:
             continue
-        definition_id = f"bucketdef:{row['budget_id']}:{bucket_key}"
+        key = (row["budget_id"], bucket_key)
+        existing_policy = definition_candidates.get(key)
+        if existing_policy is None and row["rollover_policy"] is not None:
+            definition_candidates[key] = str(row["rollover_policy"])
+        elif key not in definition_candidates:
+            definition_candidates[key] = None
+
+    for (budget_id, bucket_key), rollover_policy in definition_candidates.items():
+        definition_id = f"bucketdef:{budget_id}:{bucket_key}"
         connection.execute(
             sa.text(
                 """
@@ -143,10 +153,10 @@ def upgrade() -> None:
             ),
             {
                 "id": definition_id,
-                "budget_id": row["budget_id"],
+                "budget_id": budget_id,
                 "bucket_key": bucket_key,
                 "name": _bucket_display_name(bucket_key),
-                "rollover_policy": row["rollover_policy"] or "none",
+                "rollover_policy": rollover_policy or "none",
             },
         )
 
@@ -190,12 +200,13 @@ def downgrade() -> None:
         )
         batch_op.drop_column("bucket_definition_id")
 
-    with op.batch_alter_table("budget_categories", schema=None) as batch_op:
-        batch_op.drop_column("rollover_policy")
-
     op.drop_index(
         "ix_budget_bucket_category_mappings_bucket_definition_id",
         table_name="budget_bucket_category_mappings",
     )
     op.drop_table("budget_bucket_category_mappings")
+
+    with op.batch_alter_table("budget_categories", schema=None) as batch_op:
+        batch_op.drop_column("rollover_policy")
+
     op.drop_table("budget_bucket_definitions")

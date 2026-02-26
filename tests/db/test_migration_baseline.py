@@ -22,6 +22,12 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("to_status", "changed_at"),
         },
         "raw_transactions": {("import_batch_id",), ("parse_status",)},
+        "budget_buckets": {
+            ("budget_id", "period_month", "bucket_definition_id"),
+        },
+        "budget_bucket_category_mappings": {
+            ("bucket_definition_id",),
+        },
         "categories": {("name",)},
         "transactions": {
             ("account_id", "posted_date"),
@@ -171,6 +177,14 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         budget_period_uniques = inspector.get_unique_constraints("budget_periods")
         assert ("budget_id", "period_month") in {
             tuple(item["column_names"]) for item in budget_period_uniques
+        }
+        budget_bucket_definition_uniques = inspector.get_unique_constraints("budget_bucket_definitions")
+        assert ("budget_id", "bucket_key") in {
+            tuple(item["column_names"]) for item in budget_bucket_definition_uniques
+        }
+        budget_bucket_mapping_uniques = inspector.get_unique_constraints("budget_bucket_category_mappings")
+        assert ("budget_category_id",) in {
+            tuple(item["column_names"]) for item in budget_bucket_mapping_uniques
         }
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}

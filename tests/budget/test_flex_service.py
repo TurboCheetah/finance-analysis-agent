@@ -18,6 +18,7 @@ from finance_analysis_agent.db.models import (
     Budget,
     BudgetAllocation,
     BudgetBucket,
+    BudgetBucketCategoryMapping,
     BudgetBucketDefinition,
     BudgetCategory,
     BudgetPeriod,
@@ -653,3 +654,208 @@ def test_budget_compute_flex_uses_outflow_only_actuals(db_session: Session) -> N
     actual_by_bucket = {bucket.bucket_key: bucket.actual_amount for bucket in result.buckets}
     assert result.spent_total == Decimal("100.00")
     assert actual_by_bucket["flex"] == Decimal("100.00")
+
+
+def test_budget_compute_flex_rollover_total_uses_bucket_level_carry_once(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-rent", name="Rent")
+    _seed_budget(db_session, budget_id="budget-carry-once")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-rent",
+        budget_id="budget-carry-once",
+        category_id="cat-rent",
+    )
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-jan-rent-carry",
+        category_id="cat-rent",
+        posted_date=date(2026, 1, 5),
+        amount="-50.00",
+    )
+    db_session.flush()
+
+    budget_compute_flex(
+        BudgetComputeFlexRequest(
+            budget_id="budget-carry-once",
+            period_month="2026-01",
+            available_cash="200.00",
+            actor="budgeter",
+            reason="jan close for carry",
+            status="closed",
+            bucket_plans=_bucket_plans(
+                fixed="100.00",
+                non_monthly="0.00",
+                flex="0.00",
+                fixed_policy="carry_both",
+                non_monthly_policy="none",
+                flex_policy="none",
+            ),
+            category_plans=[
+                BudgetCategoryPlanInput(
+                    budget_category_id="bc-rent",
+                    bucket_key="fixed",
+                    planned_amount="100.00",
+                    rollover_policy="carry_both",
+                ),
+            ],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    february = budget_compute_flex(
+        BudgetComputeFlexRequest(
+            budget_id="budget-carry-once",
+            period_month="2026-02",
+            available_cash="200.00",
+            actor="budgeter",
+            reason="feb carry",
+            bucket_plans=_bucket_plans(
+                fixed="100.00",
+                non_monthly="0.00",
+                flex="0.00",
+                fixed_policy="carry_both",
+                non_monthly_policy="none",
+                flex_policy="none",
+            ),
+            category_plans=[
+                BudgetCategoryPlanInput(
+                    budget_category_id="bc-rent",
+                    bucket_key="fixed",
+                    planned_amount="100.00",
+                    rollover_policy="carry_both",
+                ),
+            ],
+        ),
+        db_session,
+    )
+
+    assert february.rollover_total == Decimal("50.00")
+
+
+def test_budget_compute_flex_rejects_unmapped_budget_categories(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-rent", name="Rent")
+    _seed_category(db_session, category_id="cat-food", name="Food")
+    _seed_budget(db_session, budget_id="budget-unmapped")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-rent",
+        budget_id="budget-unmapped",
+        category_id="cat-rent",
+    )
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-food",
+        budget_id="budget-unmapped",
+        category_id="cat-food",
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="Missing bucket mapping for budget_category_id\\(s\\): bc-food"):
+        budget_compute_flex(
+            BudgetComputeFlexRequest(
+                budget_id="budget-unmapped",
+                period_month="2026-02",
+                available_cash="2000.00",
+                actor="budgeter",
+                reason="missing category mapping",
+                bucket_plans=_bucket_plans(
+                    fixed="1200.00",
+                    non_monthly="300.00",
+                    flex="500.00",
+                ),
+                category_plans=[
+                    BudgetCategoryPlanInput(
+                        budget_category_id="bc-rent",
+                        bucket_key="fixed",
+                        planned_amount="1200.00",
+                    ),
+                ],
+            ),
+            db_session,
+        )
+
+
+def test_budget_compute_flex_cleans_stale_category_mapping_when_plan_omits_category(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-rent", name="Rent")
+    _seed_category(db_session, category_id="cat-food", name="Food")
+    _seed_budget(db_session, budget_id="budget-stale-map")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-rent",
+        budget_id="budget-stale-map",
+        category_id="cat-rent",
+    )
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-food",
+        budget_id="budget-stale-map",
+        category_id="cat-food",
+    )
+    db_session.flush()
+
+    budget_compute_flex(
+        BudgetComputeFlexRequest(
+            budget_id="budget-stale-map",
+            period_month="2026-02",
+            available_cash="2000.00",
+            actor="budgeter",
+            reason="seed mappings",
+            bucket_plans=_bucket_plans(
+                fixed="1200.00",
+                non_monthly="300.00",
+                flex="500.00",
+            ),
+            category_plans=[
+                BudgetCategoryPlanInput(
+                    budget_category_id="bc-rent",
+                    bucket_key="fixed",
+                    planned_amount="1200.00",
+                ),
+                BudgetCategoryPlanInput(
+                    budget_category_id="bc-food",
+                    bucket_key="flex",
+                    planned_amount="500.00",
+                ),
+            ],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="Missing bucket mapping for budget_category_id\\(s\\): bc-food"):
+        budget_compute_flex(
+            BudgetComputeFlexRequest(
+                budget_id="budget-stale-map",
+                period_month="2026-03",
+                available_cash="2000.00",
+                actor="budgeter",
+                reason="omit one mapping",
+                bucket_plans=_bucket_plans(
+                    fixed="1200.00",
+                    non_monthly="300.00",
+                    flex="500.00",
+                ),
+                category_plans=[
+                    BudgetCategoryPlanInput(
+                        budget_category_id="bc-rent",
+                        bucket_key="fixed",
+                        planned_amount="1200.00",
+                    ),
+                ],
+            ),
+            db_session,
+        )
+    db_session.flush()
+
+    mapping_rows = db_session.scalars(
+        select(BudgetBucketCategoryMapping)
+        .where(BudgetBucketCategoryMapping.budget_category_id.in_(["bc-rent", "bc-food"]))
+        .order_by(BudgetBucketCategoryMapping.budget_category_id.asc())
+    ).all()
+    assert [row.budget_category_id for row in mapping_rows] == ["bc-rent"]
