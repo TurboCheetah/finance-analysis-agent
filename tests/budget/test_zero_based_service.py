@@ -243,6 +243,27 @@ def test_budget_compute_zero_based_is_idempotent_for_same_request(db_session: Se
         budget_category_id="bc-food",
         amount="100.00",
     )
+    db_session.add(
+        BudgetPeriod(
+            id="period-idem",
+            budget_id="budget-idem",
+            period_month="2026-03",
+            to_assign=Decimal("0.00"),
+            assigned_total=Decimal("0.00"),
+            spent_total=Decimal("0.00"),
+            rollover_total=Decimal("0.00"),
+            status="open",
+        )
+    )
+    db_session.add(
+        BudgetAllocation(
+            id="legacy-allocation-id",
+            budget_period_id="period-idem",
+            budget_category_id="bc-food",
+            assigned_amount=Decimal("25.00"),
+            source="legacy",
+        )
+    )
     db_session.flush()
 
     request = BudgetComputeZeroBasedRequest(
@@ -263,15 +284,18 @@ def test_budget_compute_zero_based_is_idempotent_for_same_request(db_session: Se
         .select_from(BudgetPeriod)
         .where(BudgetPeriod.budget_id == "budget-idem", BudgetPeriod.period_month == "2026-03")
     )
-    allocation_count = db_session.scalar(
-        select(func.count())
-        .select_from(BudgetAllocation)
+    allocations = db_session.scalars(
+        select(BudgetAllocation)
         .where(BudgetAllocation.budget_period_id == first.budget_period_id)
-    )
+        .order_by(BudgetAllocation.id.asc())
+    ).all()
 
     assert first == second
     assert period_count == 1
-    assert allocation_count == 1
+    assert len(allocations) == 1
+    assert allocations[0].id == f"alloc:{first.budget_period_id}:bc-food"
+    assert allocations[0].budget_category_id == "bc-food"
+    assert allocations[0].assigned_amount == Decimal("100.00")
 
 
 def test_budget_compute_zero_based_respects_snoozed_targets(db_session: Session) -> None:
@@ -656,6 +680,45 @@ def test_budget_compute_zero_based_rejects_unsupported_target_cadence(db_session
                         cadence="weekly",
                         amount="50.00",
                     )
+                ],
+            ),
+            db_session,
+        )
+
+
+def test_budget_compute_zero_based_rejects_duplicate_target_policy_budget_category_ids(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-target-dup", name="Target Duplicate")
+    _seed_budget(db_session, budget_id="budget-target-dup")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-target-dup",
+        budget_id="budget-target-dup",
+        category_id="cat-target-dup",
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match=r"target_policies\[1\]\.budget_category_id is duplicated"):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-target-dup",
+                period_month="2026-02",
+                available_cash="1000.00",
+                actor="budgeter",
+                reason="duplicate target policy category",
+                target_policies=[
+                    BudgetTargetPolicyInput(
+                        budget_category_id="bc-target-dup",
+                        target_type="scheduled",
+                        amount="10.00",
+                    ),
+                    BudgetTargetPolicyInput(
+                        budget_category_id="bc-target-dup",
+                        target_type="scheduled",
+                        amount="20.00",
+                    ),
                 ],
             ),
             db_session,

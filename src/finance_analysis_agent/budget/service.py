@@ -153,11 +153,15 @@ def _validate_allocations(values: list[BudgetCategoryAllocationInput]) -> dict[s
 
 def _validate_target_policies(values: list[BudgetTargetPolicyInput]) -> list[_ValidatedTargetPolicy]:
     parsed: list[_ValidatedTargetPolicy] = []
+    seen_budget_category_ids: set[str] = set()
     for index, policy in enumerate(values):
         category_id = _parse_non_empty(
             policy.budget_category_id,
             field_name=f"target_policies[{index}].budget_category_id",
         )
+        if category_id in seen_budget_category_ids:
+            raise ValueError(f"target_policies[{index}].budget_category_id is duplicated")
+        seen_budget_category_ids.add(category_id)
         target_type = _parse_non_empty(
             policy.target_type,
             field_name=f"target_policies[{index}].target_type",
@@ -485,13 +489,13 @@ def _sync_budget_allocations(
     allocation_inputs: dict[str, _ValidatedAllocation],
     session: Session,
 ) -> None:
-    existing = _allocation_map_for_period(budget_period_id=budget_period_id, session=session)
-    expected_ids = {snapshot.budget_category_id for snapshot in snapshots}
+    canonical_ids: dict[str, str] = {}
 
     for snapshot in snapshots:
         allocation_input = allocation_inputs.get(snapshot.budget_category_id)
         source = allocation_input.source if allocation_input is not None else _ALLOCATION_SOURCE_ENGINE
         allocation_id = f"alloc:{budget_period_id}:{snapshot.budget_category_id}"
+        canonical_ids[snapshot.budget_category_id] = allocation_id
         stmt = sqlite_insert(BudgetAllocation).values(
             id=allocation_id,
             budget_period_id=budget_period_id,
@@ -510,8 +514,12 @@ def _sync_budget_allocations(
         )
         session.execute(stmt)
 
-    for budget_category_id, allocation in existing.items():
-        if budget_category_id not in expected_ids:
+    existing = session.scalars(
+        select(BudgetAllocation).where(BudgetAllocation.budget_period_id == budget_period_id)
+    ).all()
+    for allocation in existing:
+        canonical_id = canonical_ids.get(allocation.budget_category_id)
+        if canonical_id is None or allocation.id != canonical_id:
             session.delete(allocation)
 
 
@@ -524,33 +532,35 @@ def _sync_rollover_row(
     session: Session,
 ) -> None:
     rollover_id = f"rollover:budget:{budget_id}:{previous_period_month}->{period_month}:overspent"
-    existing = session.get(BudgetRollover, rollover_id)
     if carry_amount <= 0:
+        existing = session.get(BudgetRollover, rollover_id)
         if existing is not None:
             session.delete(existing)
         return
 
-    if existing is None:
-        session.add(
-            BudgetRollover(
-                id=rollover_id,
-                budget_id=budget_id,
-                dimension_type=_ROLLOVER_DIMENSION_TYPE,
-                dimension_id=budget_id,
-                from_period=previous_period_month,
-                to_period=period_month,
-                carry_amount=carry_amount,
-                policy_applied=_ROLLOVER_POLICY_REDUCE_TO_ASSIGN,
-            )
-        )
-        return
-
-    existing.dimension_type = _ROLLOVER_DIMENSION_TYPE
-    existing.dimension_id = budget_id
-    existing.from_period = previous_period_month
-    existing.to_period = period_month
-    existing.carry_amount = carry_amount
-    existing.policy_applied = _ROLLOVER_POLICY_REDUCE_TO_ASSIGN
+    stmt = sqlite_insert(BudgetRollover).values(
+        id=rollover_id,
+        budget_id=budget_id,
+        dimension_type=_ROLLOVER_DIMENSION_TYPE,
+        dimension_id=budget_id,
+        from_period=previous_period_month,
+        to_period=period_month,
+        carry_amount=carry_amount,
+        policy_applied=_ROLLOVER_POLICY_REDUCE_TO_ASSIGN,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[BudgetRollover.id],
+        set_={
+            "budget_id": budget_id,
+            "dimension_type": _ROLLOVER_DIMENSION_TYPE,
+            "dimension_id": budget_id,
+            "from_period": previous_period_month,
+            "to_period": period_month,
+            "carry_amount": carry_amount,
+            "policy_applied": _ROLLOVER_POLICY_REDUCE_TO_ASSIGN,
+        },
+    )
+    session.execute(stmt)
 
 
 def budget_compute_zero_based(
