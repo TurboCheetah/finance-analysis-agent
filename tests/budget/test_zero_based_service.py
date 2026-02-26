@@ -485,6 +485,17 @@ def test_budget_compute_zero_based_rejects_invalid_period_month(db_session: Sess
             ),
             db_session,
         )
+    with pytest.raises(ValueError, match="period_month must be in YYYY-MM format"):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-invalid-period",
+                period_month="2026-2",
+                available_cash="100.00",
+                actor="budgeter",
+                reason="invalid month padding",
+            ),
+            db_session,
+        )
 
 
 def test_budget_compute_zero_based_rejects_negative_assignments(db_session: Session) -> None:
@@ -545,7 +556,7 @@ def test_budget_compute_zero_based_rejects_unsupported_target_cadence(db_session
     )
     db_session.flush()
 
-    with pytest.raises(ValueError, match="target_policies\\[0\\].cadence"):
+    with pytest.raises(ValueError, match=r"target_policies\[0\].cadence"):
         budget_compute_zero_based(
             BudgetComputeZeroBasedRequest(
                 budget_id="budget-target",
@@ -560,6 +571,39 @@ def test_budget_compute_zero_based_rejects_unsupported_target_cadence(db_session
                         amount="50.00",
                     )
                 ],
+            ),
+            db_session,
+        )
+
+
+def test_budget_compute_zero_based_rejects_every_n_months_zero_interval(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-target-interval", name="Target Interval")
+    _seed_budget(db_session, budget_id="budget-target-interval")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-target-interval",
+        budget_id="budget-target-interval",
+        category_id="cat-target-interval",
+    )
+    _seed_target(
+        db_session,
+        target_id="target-interval",
+        budget_category_id="bc-target-interval",
+        amount="50.00",
+        cadence="every_n_months",
+        metadata_json={"months_interval": 0, "anchor_month": "2026-01"},
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="every_n_months interval must be > 0"):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-target-interval",
+                period_month="2026-02",
+                available_cash="1000.00",
+                actor="budgeter",
+                reason="invalid zero interval",
             ),
             db_session,
         )

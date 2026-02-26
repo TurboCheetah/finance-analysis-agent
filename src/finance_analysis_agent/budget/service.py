@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from calendar import monthrange
 from uuid import uuid4
 
 from sqlalchemy import and_, case, func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.budget.types import (
@@ -39,6 +41,7 @@ _ALLOWED_CADENCES = {"monthly", "every_n_months"}
 _ROLLOVER_DIMENSION_TYPE = "budget_period_overspent"
 _ROLLOVER_POLICY_REDUCE_TO_ASSIGN = "reduce_to_assign"
 _ALLOCATION_SOURCE_ENGINE = "budget_compute_zero_based"
+_PERIOD_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 @dataclass(slots=True)
@@ -98,12 +101,11 @@ def _parse_decimal(value: object, *, field_name: str, non_negative: bool = False
 
 
 def _period_bounds(period_month: str) -> tuple[date, date]:
+    if not _PERIOD_MONTH_RE.fullmatch(period_month):
+        raise ValueError("period_month must be in YYYY-MM format")
     try:
-        year_text, month_text = period_month.split("-")
-        year = int(year_text)
-        month = int(month_text)
-        start = date(year, month, 1)
-    except (TypeError, ValueError) as exc:
+        start = date.fromisoformat(f"{period_month}-01")
+    except ValueError as exc:
         raise ValueError("period_month must be in YYYY-MM format") from exc
     end_day = monthrange(start.year, start.month)[1]
     return start, date(start.year, start.month, end_day)
@@ -265,26 +267,30 @@ def _upsert_target_policies(
                 f"found {len(existing)} for {policy.budget_category_id}"
             )
 
-        if target is None:
-            target = BudgetTarget(
-                id=str(uuid4()),
-                budget_category_id=policy.budget_category_id,
-                target_type=policy.target_type,
-                amount=policy.amount,
-                cadence=policy.cadence,
-                top_up=policy.top_up,
-                snoozed_until=policy.snoozed_until,
-                metadata_json=policy.metadata_json,
-            )
-            session.add(target)
-            continue
-
-        target.target_type = policy.target_type
-        target.amount = policy.amount
-        target.cadence = policy.cadence
-        target.top_up = policy.top_up
-        target.snoozed_until = policy.snoozed_until
-        target.metadata_json = policy.metadata_json
+        target_id = target.id if target is not None else f"target:{policy.budget_category_id}"
+        stmt = sqlite_insert(BudgetTarget).values(
+            id=target_id,
+            budget_category_id=policy.budget_category_id,
+            target_type=policy.target_type,
+            amount=policy.amount,
+            cadence=policy.cadence,
+            top_up=policy.top_up,
+            snoozed_until=policy.snoozed_until,
+            metadata_json=policy.metadata_json,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[BudgetTarget.id],
+            set_={
+                "budget_category_id": policy.budget_category_id,
+                "target_type": policy.target_type,
+                "amount": policy.amount,
+                "cadence": policy.cadence,
+                "top_up": policy.top_up,
+                "snoozed_until": policy.snoozed_until,
+                "metadata_json": policy.metadata_json,
+            },
+        )
+        session.execute(stmt)
 
 
 def _resolve_targets_by_budget_category(
@@ -377,12 +383,13 @@ def _allocation_map_for_period(*, budget_period_id: str, session: Session) -> di
 def _parse_interval_months(metadata_json: dict[str, object] | None) -> int:
     if metadata_json is None:
         return 1
-    interval_raw = (
-        metadata_json.get("months_interval")
-        or metadata_json.get("interval_months")
-        or metadata_json.get("every_n_months")
-        or 1
-    )
+    interval_raw: object = 1
+    if "months_interval" in metadata_json:
+        interval_raw = metadata_json["months_interval"]
+    elif "interval_months" in metadata_json:
+        interval_raw = metadata_json["interval_months"]
+    elif "every_n_months" in metadata_json:
+        interval_raw = metadata_json["every_n_months"]
     try:
         interval = int(str(interval_raw))
     except (TypeError, ValueError) as exc:
@@ -432,30 +439,38 @@ def _upsert_budget_period(
     to_assign: Decimal,
     session: Session,
 ) -> BudgetPeriod:
+    stmt = sqlite_insert(BudgetPeriod).values(
+        id=str(uuid4()),
+        budget_id=validated.budget_id,
+        period_month=validated.period_month,
+        to_assign=to_assign,
+        assigned_total=assigned_total,
+        spent_total=spent_total,
+        rollover_total=rollover_total,
+        status=validated.status,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[BudgetPeriod.budget_id, BudgetPeriod.period_month],
+        set_={
+            "to_assign": to_assign,
+            "assigned_total": assigned_total,
+            "spent_total": spent_total,
+            "rollover_total": rollover_total,
+            "status": validated.status,
+        },
+    )
+    session.execute(stmt)
+
     budget_period = _resolve_period(
         budget_id=validated.budget_id,
         period_month=validated.period_month,
         session=session,
     )
     if budget_period is None:
-        budget_period = BudgetPeriod(
-            id=str(uuid4()),
-            budget_id=validated.budget_id,
-            period_month=validated.period_month,
-            to_assign=to_assign,
-            assigned_total=assigned_total,
-            spent_total=spent_total,
-            rollover_total=rollover_total,
-            status=validated.status,
+        raise RuntimeError(
+            "Failed to resolve BudgetPeriod after upsert for "
+            f"{validated.budget_id}/{validated.period_month}"
         )
-        session.add(budget_period)
-        return budget_period
-
-    budget_period.to_assign = to_assign
-    budget_period.assigned_total = assigned_total
-    budget_period.spent_total = spent_total
-    budget_period.rollover_total = rollover_total
-    budget_period.status = validated.status
     return budget_period
 
 
