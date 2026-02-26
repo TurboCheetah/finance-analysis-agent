@@ -416,7 +416,7 @@ Research anchors:
   - Multi-currency conversion via explicit FX tables.
   - Household sharing/permissions and guided onboarding/budget builder.
 
-### 10.1) Execution Status (Linear-aligned, updated February 25, 2026)
+### 10.1) Execution Status (Linear-aligned, updated February 26, 2026)
 - [x] TUR-31: Define canonical SQLite schema + initial Alembic baseline
 - [x] TUR-32: Implement ImportBatch idempotency + source fingerprinting
 - [x] TUR-33: Build immutable transaction event trail + provenance API
@@ -428,7 +428,7 @@ Research anchors:
 - [x] TUR-39: Add explainable categorize_suggest service (optional heuristic/LLM-assisted)
 - [x] TUR-40: Implement txn_dedupe_match hard/soft matching core
 - [x] TUR-41: Add pending->posted linking + multi-source duplicate safeguards
-- [ ] TUR-42: Implement statement reconciliation checkpoints + trust score
+- [x] TUR-42: Implement statement reconciliation checkpoints + trust score
 - [ ] TUR-43: Implement zero-based budgeting engine (`to_assign`, targets, underfunded/overspent)
 - [ ] TUR-44: Implement flex budgeting engine + rollover policies
 - [ ] TUR-45: Implement goal ledger + recurring schedule/missed-event warnings
@@ -436,7 +436,7 @@ Research anchors:
 - [ ] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-42.
+Next issue in strict sequence: TUR-43.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
