@@ -149,18 +149,24 @@ def upgrade() -> None:
         connection.execute(
             sa.text(
                 """
-                INSERT OR IGNORE INTO budget_bucket_definitions (
+                INSERT INTO budget_bucket_definitions (
                     id,
                     budget_id,
                     bucket_key,
                     name,
                     rollover_policy
-                ) VALUES (
+                )
+                SELECT
                     :id,
                     :budget_id,
                     :bucket_key,
                     :name,
                     :rollover_policy
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM budget_bucket_definitions
+                    WHERE budget_id = :budget_id
+                      AND bucket_key = :bucket_key
                 )
                 """
             ),
