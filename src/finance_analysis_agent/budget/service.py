@@ -411,7 +411,10 @@ def _allocation_map_for_period(*, budget_period_id: str, session: Session) -> di
 
 def _parse_interval_months(metadata_json: dict[str, object] | None) -> int:
     if metadata_json is None:
-        return 1
+        raise ValueError(
+            "every_n_months target metadata must include one of: "
+            "months_interval, interval_months, every_n_months"
+        )
     interval_raw: object = 1
     if "months_interval" in metadata_json:
         interval_raw = metadata_json["months_interval"]

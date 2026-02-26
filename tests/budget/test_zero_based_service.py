@@ -923,8 +923,17 @@ def test_budget_compute_zero_based_rejects_every_n_months_zero_interval(db_sessi
         )
 
 
+@pytest.mark.parametrize(
+    ("metadata_json", "reason"),
+    [
+        (None, "missing interval key null metadata"),
+        ({"anchor_month": "2026-01"}, "missing interval key"),
+    ],
+)
 def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_interval_key(
     db_session: Session,
+    metadata_json: dict[str, object] | None,
+    reason: str,
 ) -> None:
     _seed_account(db_session)
     _seed_category(db_session, category_id="cat-target-interval-missing", name="Target Interval Missing")
@@ -941,7 +950,7 @@ def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_inter
         budget_category_id="bc-target-interval-missing",
         amount="50.00",
         cadence="every_n_months",
-        metadata_json={"anchor_month": "2026-01"},
+        metadata_json=metadata_json,
     )
     db_session.flush()
 
@@ -955,7 +964,7 @@ def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_inter
                 period_month="2026-02",
                 available_cash="1000.00",
                 actor="budgeter",
-                reason="missing interval key",
+                reason=reason,
             ),
             db_session,
         )
