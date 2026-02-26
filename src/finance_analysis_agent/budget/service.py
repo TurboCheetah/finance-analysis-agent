@@ -419,7 +419,7 @@ def _parse_interval_months(metadata_json: dict[str, object] | None) -> int:
         interval_raw = metadata_json["interval_months"]
     elif "every_n_months" in metadata_json:
         interval_raw = metadata_json["every_n_months"]
-    elif metadata_json:
+    else:
         raise ValueError(
             "every_n_months target metadata must include one of: "
             "months_interval, interval_months, every_n_months"

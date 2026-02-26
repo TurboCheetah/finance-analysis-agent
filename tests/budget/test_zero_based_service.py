@@ -965,6 +965,10 @@ def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_inter
     ("metadata_json", "expected_error"),
     [
         (
+            {},
+            r"target_policies\[0\]\.metadata_json every_n_months target metadata must include one of",
+        ),
+        (
             {"anchor_month": "2026-01"},
             r"target_policies\[0\]\.metadata_json every_n_months target metadata must include one of",
         ),
