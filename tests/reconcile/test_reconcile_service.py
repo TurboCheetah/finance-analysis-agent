@@ -225,6 +225,55 @@ def test_account_reconcile_no_adjustment_proposal_within_tolerance(db_session: S
     assert result.adjustment_proposal is None
 
 
+def test_account_reconcile_prefers_statement_opening_snapshot_same_day_sources(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_statement(
+        db_session,
+        statement_id="stmt-source-priority",
+        period_start=date(2026, 6, 1),
+        period_end=date(2026, 6, 30),
+        ending_balance=Decimal("110.00"),
+    )
+    _seed_balance_snapshot(
+        db_session,
+        snapshot_id="snap-open-priority-statement",
+        snapshot_date=date(2026, 6, 1),
+        balance=Decimal("100.00"),
+        source="statement",
+    )
+    _seed_balance_snapshot(
+        db_session,
+        snapshot_id="snap-open-priority-reconciliation",
+        snapshot_date=date(2026, 6, 1),
+        balance=Decimal("95.00"),
+        source="reconciliation",
+    )
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-source-priority-1",
+        posted_date=date(2026, 6, 10),
+        amount=Decimal("10.00"),
+    )
+    db_session.flush()
+
+    result = account_reconcile(
+        AccountReconcileRequest(
+            account_id="acct-1",
+            period_start=date(2026, 6, 1),
+            period_end=date(2026, 6, 30),
+            actor="reconciler",
+            reason="source precedence check",
+        ),
+        db_session,
+    )
+
+    assert result.status == "pass"
+    assert result.computed_balance == Decimal("110.00")
+    assert result.delta == Decimal("0.00")
+
+
 def test_account_reconcile_fails_with_unresolved_items_and_delta(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_statement(
@@ -380,6 +429,46 @@ def test_approve_reconciliation_adjustment_rejects_second_approval(db_session: S
                 reconciliation_id=reconcile_result.reconciliation_id,
                 actor="approver",
                 reason="second attempt",
+            ),
+            db_session,
+        )
+
+
+def test_approve_reconciliation_adjustment_rejects_within_tolerance_delta(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_statement(
+        db_session,
+        statement_id="stmt-adjust-within-tolerance",
+        period_start=date(2026, 5, 1),
+        period_end=date(2026, 5, 31),
+        ending_balance=Decimal("100.01"),
+    )
+    _seed_balance_snapshot(
+        db_session,
+        snapshot_id="snap-open-adjust-within-tolerance",
+        snapshot_date=date(2026, 5, 1),
+        balance=Decimal("100.00"),
+    )
+    db_session.flush()
+
+    reconcile_result = account_reconcile(
+        AccountReconcileRequest(
+            account_id="acct-1",
+            period_start=date(2026, 5, 1),
+            period_end=date(2026, 5, 31),
+            actor="reconciler",
+            reason="within tolerance",
+        ),
+        db_session,
+    )
+    assert reconcile_result.status == "pass"
+
+    with pytest.raises(ValueError, match="within tolerance"):
+        approve_reconciliation_adjustment(
+            ApproveReconciliationAdjustmentRequest(
+                reconciliation_id=reconcile_result.reconciliation_id,
+                actor="approver",
+                reason="should not be allowed",
             ),
             db_session,
         )

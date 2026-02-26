@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from finance_analysis_agent.db.models import (
@@ -177,13 +177,23 @@ def _resolve_opening_balance(
     period_start: date,
     session: Session,
 ) -> Decimal:
+    source_priority = case(
+        (BalanceSnapshot.source == _STATEMENT_BALANCE_SOURCE, 0),
+        (BalanceSnapshot.source == _RECONCILIATION_BALANCE_SOURCE, 1),
+        else_=2,
+    )
     snapshot = session.scalar(
         select(BalanceSnapshot)
         .where(
             BalanceSnapshot.account_id == account_id,
             BalanceSnapshot.snapshot_date <= period_start,
         )
-        .order_by(BalanceSnapshot.snapshot_date.desc(), BalanceSnapshot.created_at.desc())
+        .order_by(
+            BalanceSnapshot.snapshot_date.desc(),
+            source_priority.asc(),
+            BalanceSnapshot.created_at.desc(),
+            BalanceSnapshot.id.desc(),
+        )
         .limit(1)
     )
     if snapshot is None:
@@ -209,7 +219,7 @@ def _upsert_balance_snapshot(
             BalanceSnapshot.account_id == account_id,
             BalanceSnapshot.snapshot_date == snapshot_date,
             BalanceSnapshot.source == source,
-        )
+        ).limit(1)
     )
     if existing is not None:
         existing.balance = balance
@@ -533,7 +543,11 @@ def approve_reconciliation_adjustment(
     request: ApproveReconciliationAdjustmentRequest,
     session: Session,
 ) -> ReconciliationAdjustmentResult:
-    """Create an explicit reconciliation adjustment transaction for a reconciliation run."""
+    """Create an explicit reconciliation adjustment transaction for a reconciliation run.
+
+    The reconciliation `status` is not mutated here. Approval state is captured via
+    `approved_*` columns and `details_json["approved_adjustment"]`.
+    """
 
     reconciliation_id = _parse_non_empty(request.reconciliation_id, field_name="reconciliation_id")
     actor = _parse_non_empty(request.actor, field_name="actor")
