@@ -9,6 +9,15 @@ from finance_analysis_agent.categorize import (
     categorize_suggest,
     get_suggestion_metrics,
 )
+from finance_analysis_agent.budget import (
+    BudgetCategoryAllocationInput,
+    BudgetCategorySnapshot,
+    BudgetComputeZeroBasedRequest,
+    BudgetComputeZeroBasedResult,
+    BudgetRunCause,
+    BudgetTargetPolicyInput,
+    budget_compute_zero_based,
+)
 from finance_analysis_agent.dedupe import (
     DedupeCandidateResult,
     DedupeScoreBreakdown,
@@ -62,6 +71,12 @@ __all__ = [
     "BulkActionType",
     "BulkTriageRequest",
     "BulkTriageResult",
+    "BudgetCategoryAllocationInput",
+    "BudgetCategorySnapshot",
+    "BudgetComputeZeroBasedRequest",
+    "BudgetComputeZeroBasedResult",
+    "BudgetRunCause",
+    "BudgetTargetPolicyInput",
     "ItemTriageOutcome",
     "AccountReconcileRequest",
     "AccountReconcileResult",
@@ -83,6 +98,7 @@ __all__ = [
     "apply_rules",
     "account_reconcile",
     "approve_reconciliation_adjustment",
+    "budget_compute_zero_based",
     "bulk_triage",
     "categorize_suggest",
     "get_suggestion_metrics",
