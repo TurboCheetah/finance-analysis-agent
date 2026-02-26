@@ -410,10 +410,13 @@ class Reconciliation(Base):
     __table_args__ = (
         Index("ix_reconciliations_account_id_period_end", "account_id", "period_end"),
         Index("ix_reconciliations_status", "status"),
+        Index("ix_reconciliations_statement_id", "statement_id"),
+        Index("ix_reconciliations_approved_adjustment_txn_id", "approved_adjustment_txn_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), nullable=False)
+    statement_id: Mapped[str | None] = mapped_column(ForeignKey("statements.id"))
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
     expected_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
@@ -421,6 +424,12 @@ class Reconciliation(Base):
     delta: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     match_rate: Mapped[float | None] = mapped_column(nullable=True)
     trust_score: Mapped[float | None] = mapped_column(nullable=True)
+    unresolved_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    adjustment_magnitude: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
+    details_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    approved_adjustment_txn_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"))
+    approved_by: Mapped[str | None] = mapped_column(String)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 

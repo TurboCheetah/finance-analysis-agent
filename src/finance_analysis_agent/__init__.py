@@ -36,6 +36,18 @@ from finance_analysis_agent.review_queue import (
     bulk_triage,
     list_review_items,
 )
+from finance_analysis_agent.reconcile import (
+    AccountReconcileRequest,
+    AccountReconcileResult,
+    ApproveReconciliationAdjustmentRequest,
+    ReconciliationAdjustmentProposal,
+    ReconciliationAdjustmentResult,
+    ReconciliationRunCause,
+    ReconciliationThresholds,
+    ReconciliationTrustWeights,
+    account_reconcile,
+    approve_reconciliation_adjustment,
+)
 
 __all__ = [
     "CategorizeSuggestRequest",
@@ -51,6 +63,14 @@ __all__ = [
     "BulkTriageRequest",
     "BulkTriageResult",
     "ItemTriageOutcome",
+    "AccountReconcileRequest",
+    "AccountReconcileResult",
+    "ApproveReconciliationAdjustmentRequest",
+    "ReconciliationAdjustmentProposal",
+    "ReconciliationAdjustmentResult",
+    "ReconciliationRunCause",
+    "ReconciliationThresholds",
+    "ReconciliationTrustWeights",
     "ReviewItemStatus",
     "ReviewQueueListRequest",
     "ReviewQueueListResult",
@@ -61,6 +81,8 @@ __all__ = [
     "TxnDedupeMatchRequest",
     "TxnDedupeMatchResult",
     "apply_rules",
+    "account_reconcile",
+    "approve_reconciliation_adjustment",
     "bulk_triage",
     "categorize_suggest",
     "get_suggestion_metrics",
