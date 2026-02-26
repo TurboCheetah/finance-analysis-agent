@@ -82,7 +82,9 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_DECIMAL_2, rounding=ROUND_HALF_UP)
 
 
-def _parse_non_empty(value: str, *, field_name: str) -> str:
+def _parse_non_empty(value: object, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} is required")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name} is required")

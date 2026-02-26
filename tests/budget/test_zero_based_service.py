@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from sqlalchemy import func, select
@@ -723,6 +724,20 @@ def test_budget_compute_zero_based_rejects_invalid_period_month(
                 available_cash="100.00",
                 actor="budgeter",
                 reason=reason,
+            ),
+            db_session,
+        )
+
+
+def test_budget_compute_zero_based_rejects_non_string_required_field(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="budget_id is required"):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id=cast(str, None),
+                period_month="2026-02",
+                available_cash="100.00",
+                actor="budgeter",
+                reason="non-string budget id",
             ),
             db_session,
         )
