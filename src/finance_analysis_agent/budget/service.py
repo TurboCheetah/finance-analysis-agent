@@ -38,6 +38,7 @@ _PERIOD_STATUS_OPEN = "open"
 _PERIOD_STATUS_CLOSED = "closed"
 _ALLOWED_PERIOD_STATUSES = {_PERIOD_STATUS_OPEN, _PERIOD_STATUS_CLOSED}
 _ALLOWED_CADENCES = {"monthly", "every_n_months"}
+_DEFAULT_EVERY_N_MONTHS_ANCHOR = "2000-01"
 _ROLLOVER_DIMENSION_TYPE = "budget_period_overspent"
 _ROLLOVER_POLICY_REDUCE_TO_ASSIGN = "reduce_to_assign"
 _ALLOCATION_SOURCE_ENGINE = "budget_compute_zero_based"
@@ -460,7 +461,7 @@ def _target_cadence_active(
     if cadence != "every_n_months":
         raise ValueError(f"Unsupported target cadence: {cadence}")
     interval = _parse_interval_months(metadata_json)
-    anchor = _parse_anchor_month(period_month, metadata_json)
+    anchor = _parse_anchor_month(_DEFAULT_EVERY_N_MONTHS_ANCHOR, metadata_json)
     delta = _months_between(anchor, period_month)
     if delta < 0:
         return False

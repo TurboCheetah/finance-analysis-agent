@@ -423,6 +423,53 @@ def test_budget_compute_zero_based_supports_every_n_months_cadence(db_session: S
     assert active_result.categories[0].target_required == Decimal("300.00")
 
 
+def test_budget_compute_zero_based_supports_every_n_months_without_anchor_month(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-auto-no-anchor", name="Auto No Anchor")
+    _seed_budget(db_session, budget_id="budget-cadence-no-anchor")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-auto-no-anchor",
+        budget_id="budget-cadence-no-anchor",
+        category_id="cat-auto-no-anchor",
+    )
+    _seed_target(
+        db_session,
+        target_id="target-auto-no-anchor",
+        budget_category_id="bc-auto-no-anchor",
+        amount="300.00",
+        cadence="every_n_months",
+        metadata_json={"months_interval": 3},
+    )
+    db_session.flush()
+
+    active_result = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-cadence-no-anchor",
+            period_month="2026-01",
+            available_cash="500.00",
+            actor="budgeter",
+            reason="active cadence month without anchor",
+        ),
+        db_session,
+    )
+    inactive_result = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-cadence-no-anchor",
+            period_month="2026-02",
+            available_cash="500.00",
+            actor="budgeter",
+            reason="inactive cadence month without anchor",
+        ),
+        db_session,
+    )
+
+    assert active_result.categories[0].target_required == Decimal("300.00")
+    assert inactive_result.categories[0].target_required == Decimal("0.00")
+
+
 def test_budget_compute_zero_based_top_up_uses_previous_available_balance(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_category(db_session, category_id="cat-home", name="Home")
