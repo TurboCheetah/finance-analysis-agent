@@ -655,27 +655,27 @@ def test_budget_compute_zero_based_does_not_carry_overspend_from_open_period(
     assert result.to_assign == Decimal("500.00")
 
 
-def test_budget_compute_zero_based_rejects_invalid_period_month(db_session: Session) -> None:
+@pytest.mark.parametrize(
+    ("period_month", "reason"),
+    [
+        ("2026/02", "invalid month"),
+        ("2026-2", "invalid month padding"),
+    ],
+)
+def test_budget_compute_zero_based_rejects_invalid_period_month(
+    db_session: Session,
+    period_month: str,
+    reason: str,
+) -> None:
     _seed_budget(db_session, budget_id="budget-invalid-period")
     with pytest.raises(ValueError, match="period_month must be in YYYY-MM format"):
         budget_compute_zero_based(
             BudgetComputeZeroBasedRequest(
                 budget_id="budget-invalid-period",
-                period_month="2026/02",
+                period_month=period_month,
                 available_cash="100.00",
                 actor="budgeter",
-                reason="invalid month",
-            ),
-            db_session,
-        )
-    with pytest.raises(ValueError, match="period_month must be in YYYY-MM format"):
-        budget_compute_zero_based(
-            BudgetComputeZeroBasedRequest(
-                budget_id="budget-invalid-period",
-                period_month="2026-2",
-                available_cash="100.00",
-                actor="budgeter",
-                reason="invalid month padding",
+                reason=reason,
             ),
             db_session,
         )
