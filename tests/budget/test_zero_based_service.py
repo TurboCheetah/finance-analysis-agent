@@ -775,7 +775,7 @@ def test_budget_compute_zero_based_rejects_unsupported_target_cadence(db_session
     )
     db_session.flush()
 
-    with pytest.raises(ValueError, match=r"target_policies\[0\].cadence"):
+    with pytest.raises(ValueError, match=r"target_policies\[0\]\.cadence"):
         budget_compute_zero_based(
             BudgetComputeZeroBasedRequest(
                 budget_id="budget-target",
