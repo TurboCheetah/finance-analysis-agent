@@ -447,6 +447,11 @@ def _upsert_budget_period(
     to_assign: Decimal,
     session: Session,
 ) -> BudgetPeriod:
+    existing_budget_period = _resolve_period(
+        budget_id=validated.budget_id,
+        period_month=validated.period_month,
+        session=session,
+    )
     stmt = sqlite_insert(BudgetPeriod).values(
         id=str(uuid4()),
         budget_id=validated.budget_id,
@@ -468,6 +473,8 @@ def _upsert_budget_period(
         },
     )
     session.execute(stmt)
+    if existing_budget_period is not None:
+        session.expire(existing_budget_period)
 
     budget_period = _resolve_period(
         budget_id=validated.budget_id,
@@ -573,6 +580,17 @@ def budget_compute_zero_based(
     _resolve_active_budget(budget_id=validated.budget_id, session=session)
 
     budget_categories = _resolve_budget_categories(budget_id=validated.budget_id, session=session)
+    category_owner_by_id: dict[str, str] = {}
+    duplicate_category_ids: set[str] = set()
+    for budget_category in budget_categories:
+        owner = category_owner_by_id.setdefault(budget_category.category_id, budget_category.id)
+        if owner != budget_category.id:
+            duplicate_category_ids.add(budget_category.category_id)
+    if duplicate_category_ids:
+        raise ValueError(
+            "Duplicate category_id across budget_categories is not supported: "
+            + ", ".join(sorted(duplicate_category_ids))
+        )
     categories_by_id = {budget_category.id: budget_category for budget_category in budget_categories}
 
     unknown_allocation_ids = sorted(set(validated.category_allocations) - set(categories_by_id))
@@ -595,7 +613,7 @@ def budget_compute_zero_based(
         session=session,
     )
 
-    category_ids = sorted({category.category_id for category in budget_categories})
+    category_ids = sorted(category_owner_by_id)
     current_spend_by_category = _ledger_spend_by_category(
         category_ids=category_ids,
         period_start=validated.period_start,

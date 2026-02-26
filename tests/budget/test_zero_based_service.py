@@ -638,6 +638,42 @@ def test_budget_compute_zero_based_rejects_negative_assignments(db_session: Sess
         )
 
 
+def test_budget_compute_zero_based_rejects_duplicate_category_ids_across_budget_categories(
+    db_session: Session,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-shared", name="Shared")
+    _seed_budget(db_session, budget_id="budget-duplicate-category-id")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-shared-1",
+        budget_id="budget-duplicate-category-id",
+        category_id="cat-shared",
+    )
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-shared-2",
+        budget_id="budget-duplicate-category-id",
+        category_id="cat-shared",
+    )
+    db_session.flush()
+
+    with pytest.raises(
+        ValueError,
+        match="Duplicate category_id across budget_categories is not supported: cat-shared",
+    ):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-duplicate-category-id",
+                period_month="2026-03",
+                available_cash="100.00",
+                actor="budgeter",
+                reason="duplicate category id mapping",
+            ),
+            db_session,
+        )
+
+
 def test_budget_compute_zero_based_rejects_non_zero_based_method(db_session: Session) -> None:
     _seed_budget(db_session, budget_id="budget-flex", method="flex")
     db_session.flush()
@@ -723,6 +759,62 @@ def test_budget_compute_zero_based_rejects_duplicate_target_policy_budget_catego
             ),
             db_session,
         )
+
+
+def test_budget_compute_zero_based_refreshes_budget_period_in_same_session(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-refresh", name="Refresh")
+    _seed_budget(db_session, budget_id="budget-refresh")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-refresh",
+        budget_id="budget-refresh",
+        category_id="cat-refresh",
+    )
+    db_session.flush()
+
+    first = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-refresh",
+            period_month="2026-03",
+            available_cash="1000.00",
+            actor="budgeter",
+            reason="first run",
+            category_allocations=[
+                BudgetCategoryAllocationInput(
+                    budget_category_id="bc-refresh",
+                    assigned_amount="100.00",
+                )
+            ],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    loaded_period = db_session.get(BudgetPeriod, first.budget_period_id)
+    assert loaded_period is not None
+    assert loaded_period.to_assign == Decimal("900.00")
+
+    second = budget_compute_zero_based(
+        BudgetComputeZeroBasedRequest(
+            budget_id="budget-refresh",
+            period_month="2026-03",
+            available_cash="800.00",
+            actor="budgeter",
+            reason="second run",
+            category_allocations=[
+                BudgetCategoryAllocationInput(
+                    budget_category_id="bc-refresh",
+                    assigned_amount="100.00",
+                )
+            ],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    assert second.to_assign == Decimal("700.00")
+    assert loaded_period.to_assign == Decimal("700.00")
 
 
 def test_budget_compute_zero_based_rejects_every_n_months_zero_interval(db_session: Session) -> None:
