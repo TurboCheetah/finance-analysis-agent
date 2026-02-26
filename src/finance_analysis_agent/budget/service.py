@@ -176,6 +176,18 @@ def _validate_target_policies(values: list[BudgetTargetPolicyInput]) -> list[_Va
                 raise ValueError(
                     f"target_policies[{index}].cadence must be one of {sorted(_ALLOWED_CADENCES)}"
                 )
+        metadata_json = dict(policy.metadata_json) if policy.metadata_json is not None else None
+        if cadence == "every_n_months":
+            if metadata_json is None:
+                raise ValueError(
+                    f"target_policies[{index}].metadata_json must include one of: "
+                    "months_interval, interval_months, every_n_months"
+                )
+            try:
+                _parse_interval_months(metadata_json)
+                _parse_anchor_month("2000-01", metadata_json)
+            except ValueError as exc:
+                raise ValueError(f"target_policies[{index}].metadata_json {exc}") from exc
         amount = (
             _parse_decimal(
                 policy.amount,
@@ -193,7 +205,7 @@ def _validate_target_policies(values: list[BudgetTargetPolicyInput]) -> list[_Va
                 cadence=cadence,
                 top_up=policy.top_up,
                 snoozed_until=policy.snoozed_until,
-                metadata_json=dict(policy.metadata_json) if policy.metadata_json is not None else None,
+                metadata_json=metadata_json,
             )
         )
     return parsed

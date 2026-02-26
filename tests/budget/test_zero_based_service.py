@@ -959,3 +959,61 @@ def test_budget_compute_zero_based_rejects_every_n_months_metadata_without_inter
             ),
             db_session,
         )
+
+
+@pytest.mark.parametrize(
+    ("metadata_json", "expected_error"),
+    [
+        (
+            {"anchor_month": "2026-01"},
+            "target_policies\\[0\\]\\.metadata_json every_n_months target metadata must include one of",
+        ),
+        (
+            {"months_interval": 0, "anchor_month": "2026-01"},
+            "target_policies\\[0\\]\\.metadata_json every_n_months interval must be > 0",
+        ),
+    ],
+)
+def test_budget_compute_zero_based_rejects_invalid_every_n_months_target_policy_before_persist(
+    db_session: Session,
+    metadata_json: dict[str, object],
+    expected_error: str,
+) -> None:
+    _seed_account(db_session)
+    _seed_category(db_session, category_id="cat-policy-invalid-interval", name="Policy Invalid Interval")
+    _seed_budget(db_session, budget_id="budget-policy-invalid-interval")
+    _seed_budget_category(
+        db_session,
+        budget_category_id="bc-policy-invalid-interval",
+        budget_id="budget-policy-invalid-interval",
+        category_id="cat-policy-invalid-interval",
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match=expected_error):
+        budget_compute_zero_based(
+            BudgetComputeZeroBasedRequest(
+                budget_id="budget-policy-invalid-interval",
+                period_month="2026-02",
+                available_cash="1000.00",
+                actor="budgeter",
+                reason="invalid every_n_months policy metadata",
+                target_policies=[
+                    BudgetTargetPolicyInput(
+                        budget_category_id="bc-policy-invalid-interval",
+                        target_type="scheduled",
+                        cadence="every_n_months",
+                        amount="50.00",
+                        metadata_json=metadata_json,
+                    )
+                ],
+            ),
+            db_session,
+        )
+
+    target_count = db_session.scalar(
+        select(func.count())
+        .select_from(BudgetTarget)
+        .where(BudgetTarget.budget_category_id == "bc-policy-invalid-interval")
+    )
+    assert target_count == 0
