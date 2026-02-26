@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -26,7 +26,7 @@ def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_
                     VALUES ('budget-flex', 'Household Flex', 'flex', 'USD', 1, :created_at)
                     """
                 ),
-                {"created_at": datetime(2026, 2, 26, 20, 0, 0, tzinfo=timezone.utc)},
+                {"created_at": datetime(2026, 2, 26, 20, 0, 0, tzinfo=UTC)},
             )
             connection.execute(
                 sa.text(
