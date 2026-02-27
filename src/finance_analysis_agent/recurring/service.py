@@ -334,27 +334,41 @@ def _upsert_recurring(
     return recurring
 
 
-def _existing_events_by_expected_date(
+def _upsert_recurring_event(
     *,
     recurring_id: str,
-    expected_dates: list[date],
+    expected_date: date,
+    observed_transaction_id: str | None,
+    status: str,
     session: Session,
-) -> dict[date, RecurringEvent]:
-    if not expected_dates:
-        return {}
-
-    rows = session.scalars(
+) -> RecurringEvent:
+    stmt = sqlite_insert(RecurringEvent).values(
+        id=str(uuid4()),
+        recurring_id=recurring_id,
+        expected_date=expected_date,
+        observed_transaction_id=observed_transaction_id,
+        status=status,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[RecurringEvent.recurring_id, RecurringEvent.expected_date],
+        set_={
+            "status": status,
+            "observed_transaction_id": observed_transaction_id,
+        },
+    )
+    session.execute(stmt)
+    event = session.scalar(
         select(RecurringEvent)
         .where(
             RecurringEvent.recurring_id == recurring_id,
-            RecurringEvent.expected_date.in_(expected_dates),
+            RecurringEvent.expected_date == expected_date,
         )
-        .order_by(RecurringEvent.expected_date.asc(), RecurringEvent.id.asc())
-    ).all()
-    existing: dict[date, RecurringEvent] = {}
-    for row in rows:
-        existing.setdefault(row.expected_date, row)
-    return existing
+        .order_by(RecurringEvent.id.asc())
+        .limit(1)
+    )
+    if event is None:
+        raise RuntimeError("RecurringEvent upsert did not return a row")
+    return event
 
 
 def _ensure_active_missed_review_item(
@@ -496,12 +510,6 @@ def recurring_detect_and_schedule(
             as_of_date=validated.as_of_date,
             max_iterations=validated.max_expected_iterations,
         )
-        existing_by_expected = _existing_events_by_expected_date(
-            recurring_id=recurring.id,
-            expected_dates=expected_dates,
-            session=session,
-        )
-
         used_txn_ids: set[str] = set()
         observed_count = 0
         missed_count = 0
@@ -527,29 +535,18 @@ def recurring_detect_and_schedule(
             else:
                 missed_count += 1
 
-            event = existing_by_expected.get(expected_date)
-            if event is None:
-                event = RecurringEvent(
-                    id=str(uuid4()),
-                    recurring_id=recurring.id,
-                    expected_date=expected_date,
-                    observed_transaction_id=observed_transaction_id,
-                    status=status,
+            event = _upsert_recurring_event(
+                recurring_id=recurring.id,
+                expected_date=expected_date,
+                observed_transaction_id=observed_transaction_id,
+                status=status,
+                session=session,
+            )
+            if status == _RECURRING_EVENT_STATUS_OBSERVED:
+                _resolve_active_missed_review_items(
+                    recurring_event_id=event.id,
+                    session=session,
                 )
-                session.add(event)
-                session.flush()
-            else:
-                previous_status = event.status
-                event.status = status
-                event.observed_transaction_id = observed_transaction_id
-                if (
-                    previous_status == _RECURRING_EVENT_STATUS_MISSED
-                    and status == _RECURRING_EVENT_STATUS_OBSERVED
-                ):
-                    _resolve_active_missed_review_items(
-                        recurring_event_id=event.id,
-                        session=session,
-                    )
 
             if status == _RECURRING_EVENT_STATUS_MISSED:
                 review_item_id: str | None = None

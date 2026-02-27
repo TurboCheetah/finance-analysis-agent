@@ -194,6 +194,10 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         assert ("period_month", "goal_id", "account_id", "allocation_type") in {
             tuple(item["column_names"]) for item in goal_allocation_uniques
         }
+        recurring_event_uniques = inspector.get_unique_constraints("recurring_events")
+        assert ("recurring_id", "expected_date") in {
+            tuple(item["column_names"]) for item in recurring_event_uniques
+        }
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
         assert {

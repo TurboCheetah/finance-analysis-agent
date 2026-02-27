@@ -586,6 +586,13 @@ class Recurring(Base):
 
 class RecurringEvent(Base):
     __tablename__ = "recurring_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "recurring_id",
+            "expected_date",
+            name="uq_recurring_events_recurring_id_expected_date",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     recurring_id: Mapped[str] = mapped_column(ForeignKey("recurrings.id"), nullable=False)
