@@ -345,6 +345,7 @@ def _upsert_recurring(
     session.execute(stmt)
     recurring = session.scalar(
         select(Recurring)
+        .execution_options(populate_existing=True)
         .where(
             Recurring.active.is_(True),
             Recurring.merchant_id == merchant_id,
@@ -383,6 +384,7 @@ def _upsert_recurring_event(
     session.execute(stmt)
     event = session.scalar(
         select(RecurringEvent)
+        .execution_options(populate_existing=True)
         .where(
             RecurringEvent.recurring_id == recurring_id,
             RecurringEvent.expected_date == expected_date,
