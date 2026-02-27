@@ -73,6 +73,10 @@ def upgrade() -> None:
             name="uq_budget_bucket_definitions_budget_id_bucket_key",
         ),
     )
+
+    with op.batch_alter_table("budget_categories", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("rollover_policy", sa.String(), nullable=True))
+
     op.create_table(
         "budget_bucket_category_mappings",
         sa.Column("id", sa.String(), nullable=False),
@@ -102,9 +106,6 @@ def upgrade() -> None:
         ["bucket_definition_id"],
         unique=False,
     )
-
-    with op.batch_alter_table("budget_categories", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("rollover_policy", sa.String(), nullable=True))
 
     with op.batch_alter_table("budget_buckets", schema=None) as batch_op:
         batch_op.add_column(sa.Column("bucket_definition_id", sa.String(), nullable=True))
@@ -211,6 +212,21 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    connection = op.get_bind()
+    connection.execute(
+        sa.text(
+            """
+            UPDATE budget_buckets
+            SET bucket_name = (
+                SELECT budget_bucket_definitions.name
+                FROM budget_bucket_definitions
+                WHERE budget_bucket_definitions.id = budget_buckets.bucket_definition_id
+            )
+            WHERE bucket_definition_id IS NOT NULL
+            """
+        )
+    )
+
     with op.batch_alter_table("budget_buckets", schema=None) as batch_op:
         batch_op.drop_index("ix_budget_buckets_budget_id_period_month_bucket_definition_id")
         batch_op.drop_constraint(

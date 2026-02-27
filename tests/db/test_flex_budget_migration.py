@@ -9,13 +9,7 @@ from alembic import command
 from tests.helpers import alembic_config
 
 
-def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_path: Path) -> None:
-    database_file = tmp_path / "tur44_flex_budget_migration.db"
-    database_url = f"sqlite:///{database_file}"
-    config = alembic_config(database_url)
-
-    command.upgrade(config, "2f6c8a9d1e4b")
-
+def _seed_pre_tur44_budget_data(database_url: str) -> None:
     engine = sa.create_engine(database_url)
     try:
         with engine.begin() as connection:
@@ -50,6 +44,15 @@ def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_
             )
     finally:
         engine.dispose()
+
+
+def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_path: Path) -> None:
+    database_file = tmp_path / "tur44_flex_budget_migration.db"
+    database_url = f"sqlite:///{database_file}"
+    config = alembic_config(database_url)
+
+    command.upgrade(config, "2f6c8a9d1e4b")
+    _seed_pre_tur44_budget_data(database_url)
 
     command.upgrade(config, "head")
 
@@ -101,3 +104,48 @@ def test_flex_budget_migration_adds_normalized_tables_and_backfills_buckets(tmp_
         ]
     finally:
         upgraded_engine.dispose()
+
+
+def test_flex_budget_migration_downgrade_restores_bucket_names(tmp_path: Path) -> None:
+    database_file = tmp_path / "tur44_flex_budget_migration_downgrade.db"
+    database_url = f"sqlite:///{database_file}"
+    config = alembic_config(database_url)
+
+    command.upgrade(config, "2f6c8a9d1e4b")
+    _seed_pre_tur44_budget_data(database_url)
+    command.upgrade(config, "head")
+    command.downgrade(config, "2f6c8a9d1e4b")
+
+    downgraded_engine = sa.create_engine(database_url)
+    try:
+        inspector = sa.inspect(downgraded_engine)
+        tables = set(inspector.get_table_names())
+        assert "budget_bucket_definitions" not in tables
+        assert "budget_bucket_category_mappings" not in tables
+
+        budget_category_columns = {column["name"] for column in inspector.get_columns("budget_categories")}
+        budget_bucket_columns = {column["name"] for column in inspector.get_columns("budget_buckets")}
+        assert "rollover_policy" not in budget_category_columns
+        assert "bucket_definition_id" not in budget_bucket_columns
+
+        with downgraded_engine.connect() as connection:
+            bucket_rows = connection.execute(
+                sa.text(
+                    """
+                    SELECT id, bucket_name
+                    FROM budget_buckets
+                    WHERE budget_id = 'budget-flex'
+                    ORDER BY id
+                    """
+                )
+            ).all()
+
+        assert bucket_rows == [
+            ("bucket-1", "Fixed"),
+            ("bucket-2", "Non-monthly"),
+            ("bucket-3", "Flex"),
+            ("bucket-4", "legacy_bucket"),
+            ("bucket-5", "Fixed"),
+        ]
+    finally:
+        downgraded_engine.dispose()
