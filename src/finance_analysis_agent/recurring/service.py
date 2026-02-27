@@ -241,8 +241,27 @@ def _expected_dates(
     max_iterations: int,
 ) -> list[date]:
     expected: list[date] = []
-    current = inferred.anchor_date
     guard = 0
+    current = inferred.anchor_date
+
+    if inferred.schedule_type in {"monthly", "non_monthly"}:
+        months_step = 1 if inferred.schedule_type == "monthly" else max(1, inferred.interval_n)
+        while current <= as_of_date:
+            if guard >= max_iterations:
+                raise ValueError(
+                    "max_expected_iterations exceeded while generating recurring expected dates: "
+                    f"schedule_type={inferred.schedule_type}, "
+                    f"interval_n={inferred.interval_n}, "
+                    f"as_of_date={as_of_date}, "
+                    f"current={current}, "
+                    f"guard={guard}, "
+                    f"max_iterations={max_iterations}"
+                )
+            expected.append(current)
+            guard += 1
+            current = _add_months(inferred.anchor_date, months=guard * months_step)
+        return expected
+
     while current <= as_of_date:
         if guard >= max_iterations:
             raise ValueError(

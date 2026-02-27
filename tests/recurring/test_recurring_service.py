@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Account, Merchant, Recurring, RecurringEvent, ReviewItem, Transaction
 from finance_analysis_agent.recurring import RecurringDetectRequest, recurring_detect_and_schedule
-from finance_analysis_agent.recurring.service import _infer_schedule
+from finance_analysis_agent.recurring.service import _InferredSchedule, _expected_dates, _infer_schedule
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
@@ -59,6 +59,24 @@ def _seed_transaction(
     )
 
 
+def _active_recurring_missed_review_items(db_session: Session) -> list[ReviewItem]:
+    return db_session.scalars(
+        select(ReviewItem)
+        .where(
+            ReviewItem.ref_table == "recurring_events",
+            ReviewItem.reason_code == "recurring.missed_event",
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status.in_(
+                [
+                    ReviewItemStatus.TO_REVIEW.value,
+                    ReviewItemStatus.IN_PROGRESS.value,
+                ]
+            ),
+        )
+        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
+    ).all()
+
+
 def test_recurring_detect_weekly_generates_missed_events_and_review_items(db_session: Session) -> None:
     _seed_account(db_session)
     _seed_merchant(db_session, merchant_id="mer-gym", name="Gym")
@@ -87,22 +105,9 @@ def test_recurring_detect_weekly_generates_missed_events_and_review_items(db_ses
         .where(RecurringEvent.recurring_id == recurring.id)
         .order_by(RecurringEvent.expected_date.asc())
     ).all()
-    review_items = db_session.scalars(
-        select(ReviewItem)
-        .where(
-            ReviewItem.ref_table == "recurring_events",
-            ReviewItem.reason_code == "recurring.missed_event",
-            ReviewItem.source == ReviewSource.RECURRING.value,
-            ReviewItem.status.in_(
-                [
-                    ReviewItemStatus.TO_REVIEW.value,
-                    ReviewItemStatus.IN_PROGRESS.value,
-                ]
-            ),
-        )
-        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
-    ).all()
+    review_items = _active_recurring_missed_review_items(db_session)
 
+    assert len(first.schedules) == 1
     assert first.schedules[0].schedule_type == "weekly"
     assert first.schedules[0].expected_count == 5
     assert first.schedules[0].observed_count == 3
@@ -117,22 +122,9 @@ def test_recurring_detect_weekly_generates_missed_events_and_review_items(db_ses
     recurring_event_count_after_second = db_session.scalar(
         select(func.count()).select_from(RecurringEvent).where(RecurringEvent.recurring_id == recurring.id)
     )
-    review_item_count_after_second = db_session.scalar(
-        select(func.count())
-        .select_from(ReviewItem)
-        .where(
-            ReviewItem.ref_table == "recurring_events",
-            ReviewItem.reason_code == "recurring.missed_event",
-            ReviewItem.source == ReviewSource.RECURRING.value,
-            ReviewItem.status.in_(
-                [
-                    ReviewItemStatus.TO_REVIEW.value,
-                    ReviewItemStatus.IN_PROGRESS.value,
-                ]
-            ),
-        )
-    )
+    review_item_count_after_second = len(_active_recurring_missed_review_items(db_session))
 
+    assert len(second.schedules) == 1
     assert second.schedules[0].recurring_id == first.schedules[0].recurring_id
     assert recurring_event_count_after_second == 5
     assert review_item_count_after_second == 2
@@ -223,21 +215,7 @@ def test_recurring_detect_resolves_missed_review_items_when_event_becomes_observ
         db_session,
     )
 
-    active_review_count = db_session.scalar(
-        select(func.count())
-        .select_from(ReviewItem)
-        .where(
-            ReviewItem.ref_table == "recurring_events",
-            ReviewItem.reason_code == "recurring.missed_event",
-            ReviewItem.source == ReviewSource.RECURRING.value,
-            ReviewItem.status.in_(
-                [
-                    ReviewItemStatus.TO_REVIEW.value,
-                    ReviewItemStatus.IN_PROGRESS.value,
-                ]
-            ),
-        )
-    )
+    active_review_count = len(_active_recurring_missed_review_items(db_session))
     resolved_review_count = db_session.scalar(
         select(func.count())
         .select_from(ReviewItem)
@@ -309,21 +287,7 @@ def test_recurring_detect_accepts_string_false_for_create_review_items(db_sessio
         db_session,
     )
 
-    active_review_count = db_session.scalar(
-        select(func.count())
-        .select_from(ReviewItem)
-        .where(
-            ReviewItem.ref_table == "recurring_events",
-            ReviewItem.reason_code == "recurring.missed_event",
-            ReviewItem.source == ReviewSource.RECURRING.value,
-            ReviewItem.status.in_(
-                [
-                    ReviewItemStatus.TO_REVIEW.value,
-                    ReviewItemStatus.IN_PROGRESS.value,
-                ]
-            ),
-        )
-    )
+    active_review_count = len(_active_recurring_missed_review_items(db_session))
 
     assert len(result.warnings) == 2
     assert all(item.review_item_id is None for item in result.warnings)
@@ -381,3 +345,26 @@ def test_infer_schedule_non_monthly_allows_single_month_interval() -> None:
     assert inferred is not None
     assert inferred.schedule_type == "non_monthly"
     assert inferred.interval_n == 1
+
+
+def test_expected_dates_monthly_preserves_end_of_month_anchor() -> None:
+    inferred = _InferredSchedule(
+        schedule_type="monthly",
+        interval_n=1,
+        anchor_date=date(2026, 1, 31),
+        tolerance_days=3,
+        dates=[date(2026, 1, 31)],
+    )
+
+    expected = _expected_dates(
+        inferred=inferred,
+        as_of_date=date(2026, 4, 30),
+        max_iterations=20,
+    )
+
+    assert expected == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+        date(2026, 3, 31),
+        date(2026, 4, 30),
+    ]
