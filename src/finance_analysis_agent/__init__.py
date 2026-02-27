@@ -32,6 +32,22 @@ from finance_analysis_agent.dedupe import (
     TxnDedupeMatchResult,
     txn_dedupe_match,
 )
+from finance_analysis_agent.goals import (
+    GoalAllocationInput,
+    GoalLedgerCause,
+    GoalLedgerComputeRequest,
+    GoalLedgerComputeResult,
+    GoalProgressSnapshot,
+    goal_ledger_compute,
+)
+from finance_analysis_agent.recurring import (
+    RecurringDetectCause,
+    RecurringDetectRequest,
+    RecurringDetectResult,
+    RecurringEventWarning,
+    RecurringScheduleSnapshot,
+    recurring_detect_and_schedule,
+)
 from finance_analysis_agent.rules import (
     RuleApplyResult,
     RuleDiff,
@@ -90,6 +106,11 @@ __all__ = [
     "BudgetComputeZeroBasedResult",
     "BudgetRunCause",
     "BudgetTargetPolicyInput",
+    "GoalAllocationInput",
+    "GoalLedgerCause",
+    "GoalLedgerComputeRequest",
+    "GoalLedgerComputeResult",
+    "GoalProgressSnapshot",
     "ItemTriageOutcome",
     "AccountReconcileRequest",
     "AccountReconcileResult",
@@ -99,6 +120,11 @@ __all__ = [
     "ReconciliationRunCause",
     "ReconciliationThresholds",
     "ReconciliationTrustWeights",
+    "RecurringDetectCause",
+    "RecurringDetectRequest",
+    "RecurringDetectResult",
+    "RecurringEventWarning",
+    "RecurringScheduleSnapshot",
     "ReviewItemStatus",
     "ReviewQueueListRequest",
     "ReviewQueueListResult",
@@ -115,7 +141,9 @@ __all__ = [
     "budget_compute_zero_based",
     "bulk_triage",
     "categorize_suggest",
+    "goal_ledger_compute",
     "get_suggestion_metrics",
     "list_review_items",
+    "recurring_detect_and_schedule",
     "txn_dedupe_match",
 ]

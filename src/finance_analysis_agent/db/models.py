@@ -347,7 +347,7 @@ class ReviewItem(Base):
             name="ck_review_items_status",
         ),
         CheckConstraint(
-            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'unknown')",
+            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'recurring', 'unknown')",
             name="ck_review_items_source",
         ),
     )
