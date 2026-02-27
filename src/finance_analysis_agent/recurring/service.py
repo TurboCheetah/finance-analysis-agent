@@ -31,6 +31,12 @@ _RECURRING_EVENT_STATUS_MISSED = "missed"
 _REVIEW_ITEM_TYPE_MISSED = "recurring_missed_event"
 _REVIEW_REASON_CODE_MISSED = "recurring.missed_event"
 _REVIEW_REF_TABLE_RECURRING_EVENTS = "recurring_events"
+_ACTIVE_RECURRING_MISSED_REVIEW_FILTER_SQL = (
+    "ref_table = 'recurring_events' "
+    "AND item_type = 'recurring_missed_event' "
+    "AND source = 'recurring' "
+    "AND status IN ('to_review', 'in_progress')"
+)
 
 
 @dataclass(slots=True)
@@ -379,23 +385,8 @@ def _ensure_active_missed_review_item(
     reason: str,
     session: Session,
 ) -> str:
-    existing = session.scalar(
-        select(ReviewItem)
-        .where(
-            ReviewItem.ref_table == _REVIEW_REF_TABLE_RECURRING_EVENTS,
-            ReviewItem.ref_id == recurring_event.id,
-            ReviewItem.item_type == _REVIEW_ITEM_TYPE_MISSED,
-            ReviewItem.reason_code == _REVIEW_REASON_CODE_MISSED,
-            ReviewItem.source == ReviewSource.RECURRING.value,
-            ReviewItem.status.in_(_ACTIVE_REVIEW_STATUSES),
-        )
-        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
-        .limit(1)
-    )
-    if existing is not None:
-        return existing.id
-
-    review_item = ReviewItem(
+    created_at = utcnow()
+    stmt = sqlite_insert(ReviewItem).values(
         id=str(uuid4()),
         item_type=_REVIEW_ITEM_TYPE_MISSED,
         ref_table=_REVIEW_REF_TABLE_RECURRING_EVENTS,
@@ -415,12 +406,36 @@ def _ensure_active_missed_review_item(
             "actor": actor,
             "reason": reason,
         },
-        created_at=utcnow(),
+        created_at=created_at,
         resolved_at=None,
     )
-    session.add(review_item)
-    session.flush()
-    return review_item.id
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=[
+            ReviewItem.ref_table,
+            ReviewItem.ref_id,
+            ReviewItem.item_type,
+            ReviewItem.source,
+        ],
+        index_where=text(_ACTIVE_RECURRING_MISSED_REVIEW_FILTER_SQL),
+    )
+    session.execute(stmt)
+
+    persisted = session.scalar(
+        select(ReviewItem)
+        .where(
+            ReviewItem.ref_table == _REVIEW_REF_TABLE_RECURRING_EVENTS,
+            ReviewItem.ref_id == recurring_event.id,
+            ReviewItem.item_type == _REVIEW_ITEM_TYPE_MISSED,
+            ReviewItem.reason_code == _REVIEW_REASON_CODE_MISSED,
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status.in_(_ACTIVE_REVIEW_STATUSES),
+        )
+        .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
+        .limit(1)
+    )
+    if persisted is None:
+        raise RuntimeError("Recurring missed-event review upsert did not return a row")
+    return persisted.id
 
 
 def _resolve_active_missed_review_items(

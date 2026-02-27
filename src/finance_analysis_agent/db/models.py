@@ -342,6 +342,20 @@ class ReviewItem(Base):
                 "AND status IN ('to_review', 'in_progress')"
             ),
         ),
+        Index(
+            "ux_review_items_active_recurring_missed_event",
+            "ref_table",
+            "ref_id",
+            "item_type",
+            "source",
+            unique=True,
+            sqlite_where=text(
+                "ref_table = 'recurring_events' "
+                "AND item_type = 'recurring_missed_event' "
+                "AND source = 'recurring' "
+                "AND status IN ('to_review', 'in_progress')"
+            ),
+        ),
         CheckConstraint(
             "status IN ('to_review', 'in_progress', 'resolved', 'rejected')",
             name="ck_review_items_status",

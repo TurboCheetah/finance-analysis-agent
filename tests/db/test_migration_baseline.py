@@ -254,10 +254,20 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
                     "AND name = 'ux_recurrings_active_category_id'"
                 )
             ).scalar_one()
+            recurring_missed_review_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_review_items_active_recurring_missed_event'"
+                )
+            ).scalar_one()
 
         assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
         assert "WHERE parent_id IS NULL" in root_category_index_sql
         assert "WHERE active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL" in recurring_merchant_index_sql
         assert "WHERE active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL" in recurring_category_index_sql
+        assert "AND item_type = 'recurring_missed_event'" in recurring_missed_review_index_sql
+        assert "AND source = 'recurring'" in recurring_missed_review_index_sql
+        assert "AND status IN ('to_review', 'in_progress')" in recurring_missed_review_index_sql
     finally:
         engine.dispose()
