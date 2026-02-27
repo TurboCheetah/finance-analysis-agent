@@ -109,6 +109,7 @@ def test_recurring_missed_review_item_uniqueness_migration_dedupes_active_rows(t
 
             assert rows[0][1] == "resolved"
             assert rows[0][2] is not None
+            assert rows[0][2] != datetime(2026, 2, 27, 12, 0, 0)
             assert rows[1][1] == "in_progress"
             assert active_count == 1
 

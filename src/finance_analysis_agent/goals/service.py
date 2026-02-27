@@ -85,6 +85,10 @@ def _period_bounds(period_month: str) -> tuple[date, date]:
 def _add_months(value: date, *, months: int) -> date:
     month_index = (value.month - 1) + months
     year = value.year + (month_index // 12)
+    if year > date.max.year:
+        return date.max
+    if year < date.min.year:
+        return date.min
     month = (month_index % 12) + 1
     day = min(value.day, monthrange(year, month)[1])
     return date(year, month, day)

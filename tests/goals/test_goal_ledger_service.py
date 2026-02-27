@@ -333,3 +333,29 @@ def test_goal_ledger_marks_unfunded_when_no_projection_pace(db_session: Session)
     assert snapshot.status == "unfunded"
     assert snapshot.projected_completion_date is None
     assert snapshot.months_to_completion is None
+
+
+def test_goal_ledger_projection_caps_at_date_max_when_horizon_overflows(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_goal(
+        db_session,
+        goal_id="goal-long-horizon",
+        target_amount="1000000.00",
+        monthly_contribution="1.00",
+    )
+    db_session.flush()
+
+    result = goal_ledger_compute(
+        GoalLedgerComputeRequest(
+            period_month="2026-02",
+            available_funds="0.00",
+            actor="goal-planner",
+            reason="long horizon projection",
+            allocations=[],
+        ),
+        db_session,
+    )
+
+    snapshot = result.goals[0]
+    assert snapshot.months_to_completion == 1000000
+    assert snapshot.projected_completion_date == date.max

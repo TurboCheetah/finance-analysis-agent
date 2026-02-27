@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from calendar import monthrange
 from statistics import median
 import math
@@ -90,7 +90,7 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
 def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringRequest:
     actor = _parse_non_empty(request.actor, field_name="actor")
     reason = _parse_non_empty(request.reason, field_name="reason")
-    if not isinstance(request.as_of_date, date):
+    if not isinstance(request.as_of_date, date) or isinstance(request.as_of_date, datetime):
         raise ValueError("as_of_date must be a date")
     lookback_days = int(request.lookback_days)
     minimum_occurrences = int(request.minimum_occurrences)

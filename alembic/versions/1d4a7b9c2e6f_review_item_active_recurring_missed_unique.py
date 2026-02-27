@@ -54,7 +54,7 @@ def upgrade() -> None:
         )
         UPDATE review_items
         SET status = 'resolved',
-            resolved_at = COALESCE(resolved_at, created_at)
+            resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP)
         WHERE id IN (
             SELECT id
             FROM ranked
