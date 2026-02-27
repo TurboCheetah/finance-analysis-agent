@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -359,7 +359,7 @@ def test_recurring_detect_rejects_datetime_as_of_date(db_session: Session) -> No
     with pytest.raises(ValueError, match="as_of_date must be a date"):
         recurring_detect_and_schedule(
             RecurringDetectRequest(
-                as_of_date=datetime(2026, 1, 31, 12, 0, 0),  # type: ignore[arg-type]
+                as_of_date=datetime(2026, 1, 31, 12, 0, 0, tzinfo=UTC),  # type: ignore[arg-type]
                 actor="scheduler",
                 reason="validation",
             ),
