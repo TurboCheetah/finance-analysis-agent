@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -79,6 +80,7 @@ def test_recurring_detect_weekly_generates_missed_events_and_review_items(db_ses
     second = recurring_detect_and_schedule(request, db_session)
 
     recurring = db_session.scalar(select(Recurring).where(Recurring.merchant_id == "mer-gym"))
+    assert recurring is not None
     recurring_events = db_session.scalars(
         select(RecurringEvent)
         .where(RecurringEvent.recurring_id == recurring.id)
@@ -100,7 +102,6 @@ def test_recurring_detect_weekly_generates_missed_events_and_review_items(db_ses
         .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
     ).all()
 
-    assert recurring is not None
     assert first.schedules[0].schedule_type == "weekly"
     assert first.schedules[0].expected_count == 5
     assert first.schedules[0].observed_count == 3
@@ -181,3 +182,94 @@ def test_recurring_detect_reports_skipped_transactions_without_keys(db_session: 
     )
 
     assert any(cause.code == "transactions_skipped_without_group_key" for cause in result.causes)
+
+
+def test_recurring_detect_resolves_missed_review_items_when_event_becomes_observed(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_merchant(db_session, merchant_id="mer-gym", name="Gym")
+    _seed_transaction(db_session, transaction_id="txn-1", posted_date=date(2026, 1, 1), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-2", posted_date=date(2026, 1, 8), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-3", posted_date=date(2026, 1, 15), merchant_id="mer-gym")
+    db_session.flush()
+
+    recurring_detect_and_schedule(
+        RecurringDetectRequest(
+            as_of_date=date(2026, 1, 29),
+            actor="scheduler",
+            reason="initial run",
+            lookback_days=90,
+            minimum_occurrences=3,
+            tolerance_days_default=1,
+            create_review_items=True,
+        ),
+        db_session,
+    )
+
+    _seed_transaction(db_session, transaction_id="txn-4", posted_date=date(2026, 1, 22), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-5", posted_date=date(2026, 1, 29), merchant_id="mer-gym")
+    db_session.flush()
+
+    recurring_detect_and_schedule(
+        RecurringDetectRequest(
+            as_of_date=date(2026, 1, 29),
+            actor="scheduler",
+            reason="refresh with posted matches",
+            lookback_days=90,
+            minimum_occurrences=3,
+            tolerance_days_default=1,
+            create_review_items=False,
+        ),
+        db_session,
+    )
+
+    active_review_count = db_session.scalar(
+        select(func.count())
+        .select_from(ReviewItem)
+        .where(
+            ReviewItem.ref_table == "recurring_events",
+            ReviewItem.reason_code == "recurring.missed_event",
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status.in_(
+                [
+                    ReviewItemStatus.TO_REVIEW.value,
+                    ReviewItemStatus.IN_PROGRESS.value,
+                ]
+            ),
+        )
+    )
+    resolved_review_count = db_session.scalar(
+        select(func.count())
+        .select_from(ReviewItem)
+        .where(
+            ReviewItem.ref_table == "recurring_events",
+            ReviewItem.reason_code == "recurring.missed_event",
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status == ReviewItemStatus.RESOLVED.value,
+        )
+    )
+
+    assert active_review_count == 0
+    assert resolved_review_count == 2
+
+
+def test_recurring_detect_raises_when_expected_date_generation_exceeds_limit(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_merchant(db_session, merchant_id="mer-gym", name="Gym")
+    _seed_transaction(db_session, transaction_id="txn-1", posted_date=date(2026, 1, 1), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-2", posted_date=date(2026, 1, 8), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-3", posted_date=date(2026, 1, 15), merchant_id="mer-gym")
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="max_expected_iterations exceeded"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 29),
+                actor="scheduler",
+                reason="guard check",
+                lookback_days=90,
+                minimum_occurrences=3,
+                tolerance_days_default=1,
+                max_expected_iterations=2,
+            ),
+            db_session,
+        )

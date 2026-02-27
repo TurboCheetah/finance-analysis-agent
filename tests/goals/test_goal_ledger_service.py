@@ -274,7 +274,8 @@ def test_goal_ledger_upserts_period_allocations_idempotently(db_session: Session
     assert first.allocated_this_period_total == Decimal("150.00")
     assert second.allocated_this_period_total == Decimal("175.00")
     assert row_count == 1
-    assert allocation is not None and Decimal(allocation.amount) == Decimal("175.00")
+    assert allocation is not None
+    assert Decimal(allocation.amount) == Decimal("175.00")
 
 
 def test_goal_ledger_projection_uses_monthly_contribution_precedence(db_session: Session) -> None:

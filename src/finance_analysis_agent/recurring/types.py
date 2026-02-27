@@ -46,6 +46,7 @@ class RecurringDetectRequest:
     lookback_days: int = 365
     minimum_occurrences: int = 3
     tolerance_days_default: int = 3
+    max_expected_iterations: int = 400
     create_review_items: bool = True
 
 

@@ -121,3 +121,15 @@ def test_recurring_review_source_allowed_after_migration(tmp_path: Path) -> None
         assert "AND status IN ('to_review', 'in_progress')" in dedupe_partial_index_sql
     finally:
         engine_post.dispose()
+
+    command.downgrade(config, "7e3b4c2d1f90")
+
+    engine_downgraded = sa.create_engine(database_url)
+    try:
+        with engine_downgraded.connect() as connection:
+            downgraded_source = connection.execute(
+                sa.text("SELECT source FROM review_items WHERE id = 'ri-post'")
+            ).scalar_one()
+        assert downgraded_source == "unknown"
+    finally:
+        engine_downgraded.dispose()

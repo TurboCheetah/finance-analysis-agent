@@ -40,6 +40,7 @@ class _ValidatedRecurringRequest:
     lookback_days: int
     minimum_occurrences: int
     tolerance_days_default: int
+    max_expected_iterations: int
     create_review_items: bool
 
 
@@ -71,6 +72,7 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
     lookback_days = int(request.lookback_days)
     minimum_occurrences = int(request.minimum_occurrences)
     tolerance_days_default = int(request.tolerance_days_default)
+    max_expected_iterations = int(request.max_expected_iterations)
 
     if lookback_days <= 0:
         raise ValueError("lookback_days must be > 0")
@@ -78,6 +80,8 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
         raise ValueError("minimum_occurrences must be >= 3")
     if tolerance_days_default < 0:
         raise ValueError("tolerance_days_default must be >= 0")
+    if max_expected_iterations <= 0:
+        raise ValueError("max_expected_iterations must be > 0")
 
     return _ValidatedRecurringRequest(
         as_of_date=request.as_of_date,
@@ -86,6 +90,7 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
         lookback_days=lookback_days,
         minimum_occurrences=minimum_occurrences,
         tolerance_days_default=tolerance_days_default,
+        max_expected_iterations=max_expected_iterations,
         create_review_items=bool(request.create_review_items),
     )
 
@@ -202,11 +207,26 @@ def _advance_expected_date(*, schedule_type: str, interval_n: int, current: date
     raise ValueError(f"Unsupported schedule_type: {schedule_type}")
 
 
-def _expected_dates(*, inferred: _InferredSchedule, as_of_date: date) -> list[date]:
+def _expected_dates(
+    *,
+    inferred: _InferredSchedule,
+    as_of_date: date,
+    max_iterations: int,
+) -> list[date]:
     expected: list[date] = []
     current = inferred.anchor_date
     guard = 0
     while current <= as_of_date:
+        if guard >= max_iterations:
+            raise ValueError(
+                "max_expected_iterations exceeded while generating recurring expected dates: "
+                f"schedule_type={inferred.schedule_type}, "
+                f"interval_n={inferred.interval_n}, "
+                f"as_of_date={as_of_date}, "
+                f"current={current}, "
+                f"guard={guard}, "
+                f"max_iterations={max_iterations}"
+            )
         expected.append(current)
         current = _advance_expected_date(
             schedule_type=inferred.schedule_type,
@@ -214,8 +234,6 @@ def _expected_dates(*, inferred: _InferredSchedule, as_of_date: date) -> list[da
             current=current,
         )
         guard += 1
-        if guard > 400:
-            break
     return expected
 
 
@@ -378,6 +396,29 @@ def _ensure_active_missed_review_item(
     return review_item.id
 
 
+def _resolve_active_missed_review_items(
+    *,
+    recurring_event_id: str,
+    session: Session,
+) -> None:
+    active_items = session.scalars(
+        select(ReviewItem).where(
+            ReviewItem.ref_table == _REVIEW_REF_TABLE_RECURRING_EVENTS,
+            ReviewItem.ref_id == recurring_event_id,
+            ReviewItem.item_type == _REVIEW_ITEM_TYPE_MISSED,
+            ReviewItem.reason_code == _REVIEW_REASON_CODE_MISSED,
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status.in_(_ACTIVE_REVIEW_STATUSES),
+        )
+    ).all()
+    if not active_items:
+        return
+    resolved_at = utcnow()
+    for item in active_items:
+        item.status = ReviewItemStatus.RESOLVED.value
+        item.resolved_at = resolved_at
+
+
 def recurring_detect_and_schedule(
     request: RecurringDetectRequest,
     session: Session,
@@ -437,7 +478,11 @@ def recurring_detect_and_schedule(
             session=session,
         )
 
-        expected_dates = _expected_dates(inferred=inferred, as_of_date=validated.as_of_date)
+        expected_dates = _expected_dates(
+            inferred=inferred,
+            as_of_date=validated.as_of_date,
+            max_iterations=validated.max_expected_iterations,
+        )
         existing_by_expected = _existing_events_by_expected_date(
             recurring_id=recurring.id,
             expected_dates=expected_dates,
@@ -481,8 +526,17 @@ def recurring_detect_and_schedule(
                 session.add(event)
                 session.flush()
             else:
+                previous_status = event.status
                 event.status = status
                 event.observed_transaction_id = observed_transaction_id
+                if (
+                    previous_status == _RECURRING_EVENT_STATUS_MISSED
+                    and status == _RECURRING_EVENT_STATUS_OBSERVED
+                ):
+                    _resolve_active_missed_review_items(
+                        recurring_event_id=event.id,
+                        session=session,
+                    )
 
             if status == _RECURRING_EVENT_STATUS_MISSED:
                 review_item_id: str | None = None
@@ -529,6 +583,8 @@ def recurring_detect_and_schedule(
                 severity="warning",
             )
         )
+
+    session.flush()
 
     return RecurringDetectResult(
         as_of_date=validated.as_of_date,

@@ -28,12 +28,14 @@ _ACTIVE_DEDUPE_REVIEW_FILTER_SQL = """
 
 def upgrade() -> None:
     """Upgrade schema."""
+    op.execute("PRAGMA foreign_keys=OFF")
     with op.batch_alter_table("review_items", recreate="always") as batch_op:
         batch_op.drop_constraint("ck_review_items_source", type_="check")
         batch_op.create_check_constraint(
             "ck_review_items_source",
             "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'recurring', 'unknown')",
         )
+    op.execute("PRAGMA foreign_keys=ON")
     op.drop_index("ux_review_items_active_dedupe_candidate", table_name="review_items")
     op.create_index(
         "ux_review_items_active_dedupe_candidate",
@@ -46,12 +48,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("UPDATE review_items SET source = 'unknown' WHERE source = 'recurring'")
+    op.execute("PRAGMA foreign_keys=OFF")
     with op.batch_alter_table("review_items", recreate="always") as batch_op:
         batch_op.drop_constraint("ck_review_items_source", type_="check")
         batch_op.create_check_constraint(
             "ck_review_items_source",
             "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'unknown')",
         )
+    op.execute("PRAGMA foreign_keys=ON")
     op.drop_index("ux_review_items_active_dedupe_candidate", table_name="review_items")
     op.create_index(
         "ux_review_items_active_dedupe_candidate",

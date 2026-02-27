@@ -595,6 +595,15 @@ class Goal(Base):
 
 class GoalAllocation(Base):
     __tablename__ = "goal_allocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "period_month",
+            "goal_id",
+            "account_id",
+            "allocation_type",
+            name="uq_goal_allocations_period_month_goal_id_account_id_allocation_type",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     goal_id: Mapped[str] = mapped_column(ForeignKey("goals.id"), nullable=False)

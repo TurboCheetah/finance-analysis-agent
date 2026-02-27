@@ -186,6 +186,10 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         assert ("budget_category_id",) in {
             tuple(item["column_names"]) for item in budget_bucket_mapping_uniques
         }
+        goal_allocation_uniques = inspector.get_unique_constraints("goal_allocations")
+        assert ("period_month", "goal_id", "account_id", "allocation_type") in {
+            tuple(item["column_names"]) for item in goal_allocation_uniques
+        }
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
         assert {

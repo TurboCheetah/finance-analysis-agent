@@ -10,6 +10,7 @@ import re
 from uuid import uuid4
 
 from sqlalchemy import case, func, literal, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Goal, GoalAllocation, GoalEvent, Transaction
@@ -174,38 +175,28 @@ def _upsert_period_allocations(
     if not allocations:
         return
 
-    goal_ids = sorted({item.goal_id for item in allocations})
-    account_ids = sorted({item.account_id for item in allocations})
-    existing_rows = session.scalars(
-        select(GoalAllocation).where(
-            GoalAllocation.period_month == period_month,
-            GoalAllocation.goal_id.in_(goal_ids),
-            GoalAllocation.account_id.in_(account_ids),
-        )
-    ).all()
-    existing_by_key = {
-        (row.goal_id, row.account_id, row.allocation_type): row
-        for row in existing_rows
-    }
-
     for allocation in allocations:
-        key = (allocation.goal_id, allocation.account_id, allocation.allocation_type)
-        existing = existing_by_key.get(key)
-        if existing is not None:
-            existing.amount = allocation.amount
-            continue
-
-        session.add(
-            GoalAllocation(
-                id=str(uuid4()),
-                goal_id=allocation.goal_id,
-                account_id=allocation.account_id,
-                period_month=period_month,
-                amount=allocation.amount,
-                allocation_type=allocation.allocation_type,
-                created_at=event_time,
-            )
+        stmt = sqlite_insert(GoalAllocation).values(
+            id=str(uuid4()),
+            goal_id=allocation.goal_id,
+            account_id=allocation.account_id,
+            period_month=period_month,
+            amount=allocation.amount,
+            allocation_type=allocation.allocation_type,
+            created_at=event_time,
         )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                GoalAllocation.period_month,
+                GoalAllocation.goal_id,
+                GoalAllocation.account_id,
+                GoalAllocation.allocation_type,
+            ],
+            set_={
+                "amount": allocation.amount,
+            },
+        )
+        session.execute(stmt)
 
 
 def _goal_allocations_sum_by_goal(
