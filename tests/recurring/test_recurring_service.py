@@ -273,3 +273,70 @@ def test_recurring_detect_raises_when_expected_date_generation_exceeds_limit(db_
             ),
             db_session,
         )
+
+
+def test_recurring_detect_requires_string_actor(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="actor is required"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor=None,  # type: ignore[arg-type]
+                reason="validation",
+            ),
+            db_session,
+        )
+
+
+def test_recurring_detect_accepts_string_false_for_create_review_items(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_merchant(db_session, merchant_id="mer-gym", name="Gym")
+    _seed_transaction(db_session, transaction_id="txn-1", posted_date=date(2026, 1, 1), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-2", posted_date=date(2026, 1, 8), merchant_id="mer-gym")
+    _seed_transaction(db_session, transaction_id="txn-3", posted_date=date(2026, 1, 15), merchant_id="mer-gym")
+    db_session.flush()
+
+    result = recurring_detect_and_schedule(
+        RecurringDetectRequest(
+            as_of_date=date(2026, 1, 29),
+            actor="scheduler",
+            reason="string bool parse",
+            lookback_days=90,
+            minimum_occurrences=3,
+            tolerance_days_default=1,
+            create_review_items="false",  # type: ignore[arg-type]
+        ),
+        db_session,
+    )
+
+    active_review_count = db_session.scalar(
+        select(func.count())
+        .select_from(ReviewItem)
+        .where(
+            ReviewItem.ref_table == "recurring_events",
+            ReviewItem.reason_code == "recurring.missed_event",
+            ReviewItem.source == ReviewSource.RECURRING.value,
+            ReviewItem.status.in_(
+                [
+                    ReviewItemStatus.TO_REVIEW.value,
+                    ReviewItemStatus.IN_PROGRESS.value,
+                ]
+            ),
+        )
+    )
+
+    assert len(result.warnings) == 2
+    assert all(item.review_item_id is None for item in result.warnings)
+    assert active_review_count == 0
+
+
+def test_recurring_detect_rejects_invalid_string_for_create_review_items(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="create_review_items must be a boolean"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                create_review_items="not-a-bool",  # type: ignore[arg-type]
+            ),
+            db_session,
+        )

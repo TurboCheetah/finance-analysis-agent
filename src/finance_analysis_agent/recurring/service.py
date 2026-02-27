@@ -66,11 +66,25 @@ class _TxnPoint:
     posted_date: date
 
 
-def _parse_non_empty(value: str, *, field_name: str) -> str:
+def _parse_non_empty(value: object, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} is required")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name} is required")
     return normalized
+
+
+def _parse_bool(value: object, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    raise ValueError(f"{field_name} must be a boolean")
 
 
 def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringRequest:
@@ -80,6 +94,10 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
     minimum_occurrences = int(request.minimum_occurrences)
     tolerance_days_default = int(request.tolerance_days_default)
     max_expected_iterations = int(request.max_expected_iterations)
+    create_review_items = _parse_bool(
+        request.create_review_items,
+        field_name="create_review_items",
+    )
 
     if lookback_days <= 0:
         raise ValueError("lookback_days must be > 0")
@@ -98,7 +116,7 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
         minimum_occurrences=minimum_occurrences,
         tolerance_days_default=tolerance_days_default,
         max_expected_iterations=max_expected_iterations,
-        create_review_items=bool(request.create_review_items),
+        create_review_items=create_review_items,
     )
 
 

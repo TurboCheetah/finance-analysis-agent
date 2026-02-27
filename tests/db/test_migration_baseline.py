@@ -198,6 +198,24 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         assert ("recurring_id", "expected_date") in {
             tuple(item["column_names"]) for item in recurring_event_uniques
         }
+        recurring_checks = inspector.get_check_constraints("recurrings")
+        recurring_check_sql = {
+            item.get("name", ""): (item.get("sqltext") or "")
+            for item in recurring_checks
+        }
+        recurring_key_shape_check_name = next(
+            (
+                name
+                for name in recurring_check_sql
+                if name.endswith("ck_recurrings_active_exactly_one_key")
+            ),
+            None,
+        )
+        assert recurring_key_shape_check_name is not None
+        recurring_key_shape_check_sql = recurring_check_sql[recurring_key_shape_check_name]
+        assert "active = 0 OR" in recurring_key_shape_check_sql
+        assert "merchant_id IS NOT NULL AND category_id IS NULL" in recurring_key_shape_check_sql
+        assert "merchant_id IS NULL AND category_id IS NOT NULL" in recurring_key_shape_check_sql
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
         assert {
@@ -264,8 +282,11 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
 
         assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
         assert "WHERE parent_id IS NULL" in root_category_index_sql
+        assert "CREATE UNIQUE INDEX" in recurring_merchant_index_sql
+        assert "CREATE UNIQUE INDEX" in recurring_category_index_sql
         assert "WHERE active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL" in recurring_merchant_index_sql
         assert "WHERE active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL" in recurring_category_index_sql
+        assert "ref_table = 'recurring_events'" in recurring_missed_review_index_sql
         assert "AND item_type = 'recurring_missed_event'" in recurring_missed_review_index_sql
         assert "AND source = 'recurring'" in recurring_missed_review_index_sql
         assert "AND status IN ('to_review', 'in_progress')" in recurring_missed_review_index_sql

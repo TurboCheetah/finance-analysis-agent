@@ -573,6 +573,12 @@ class BudgetRollover(Base):
 class Recurring(Base):
     __tablename__ = "recurrings"
     __table_args__ = (
+        CheckConstraint(
+            "active = 0 OR "
+            "((merchant_id IS NOT NULL AND category_id IS NULL) "
+            "OR (merchant_id IS NULL AND category_id IS NOT NULL))",
+            name="ck_recurrings_active_exactly_one_key",
+        ),
         Index(
             "ux_recurrings_active_merchant_id",
             "merchant_id",
