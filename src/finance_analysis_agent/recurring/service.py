@@ -90,6 +90,8 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
 def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringRequest:
     actor = _parse_non_empty(request.actor, field_name="actor")
     reason = _parse_non_empty(request.reason, field_name="reason")
+    if not isinstance(request.as_of_date, date):
+        raise ValueError("as_of_date must be a date")
     lookback_days = int(request.lookback_days)
     minimum_occurrences = int(request.minimum_occurrences)
     tolerance_days_default = int(request.tolerance_days_default)

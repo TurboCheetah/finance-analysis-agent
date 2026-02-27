@@ -340,3 +340,15 @@ def test_recurring_detect_rejects_invalid_string_for_create_review_items(db_sess
             ),
             db_session,
         )
+
+
+def test_recurring_detect_rejects_non_date_as_of_date(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="as_of_date must be a date"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date="2026-01-31",  # type: ignore[arg-type]
+                actor="scheduler",
+                reason="validation",
+            ),
+            db_session,
+        )
