@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from calendar import monthrange
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 import re
@@ -169,7 +169,7 @@ def _upsert_period_allocations(
     *,
     period_month: str,
     allocations: list[_ValidatedAllocation],
-    event_time,
+    event_time: datetime,
     session: Session,
 ) -> None:
     if not allocations:

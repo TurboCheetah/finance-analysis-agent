@@ -9,7 +9,8 @@ from statistics import median
 import math
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Recurring, RecurringEvent, ReviewItem, Transaction
@@ -167,7 +168,7 @@ def _infer_schedule(
     if len(intervals) < (minimum_occurrences - 1):
         return None
 
-    median_interval = int(round(median(intervals)))
+    median_interval = round(median(intervals))
     max_deviation = max(abs(value - median_interval) for value in intervals)
     tolerance_days = max(tolerance_days_default, max_deviation)
 
@@ -180,9 +181,9 @@ def _infer_schedule(
     elif 26 <= median_interval <= 33 and max_deviation <= 5:
         schedule_type = "monthly"
         interval_n = 1
-    elif median_interval >= 34 and max_deviation <= max(7, int(math.ceil(median_interval * 0.20))):
+    elif median_interval >= 34 and max_deviation <= max(7, math.ceil(median_interval * 0.20)):
         schedule_type = "non_monthly"
-        interval_n = max(2, int(round(median_interval / 30)))
+        interval_n = max(2, round(median_interval / 30))
     else:
         return None
 
@@ -275,9 +276,49 @@ def _upsert_recurring(
     session: Session,
 ) -> Recurring:
     key_type, key_value = group_key
-    merchant_id = key_value if key_type == "merchant" else None
-    category_id = key_value if key_type == "category" else None
+    if key_type == "merchant":
+        merchant_id = key_value
+        category_id = None
+        conflict_elements = [Recurring.merchant_id]
+        conflict_where = text("active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL")
+    elif key_type == "category":
+        merchant_id = None
+        category_id = key_value
+        conflict_elements = [Recurring.category_id]
+        conflict_where = text("active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL")
+    else:
+        raise ValueError(f"Unsupported recurring group key type: {key_type}")
 
+    metadata = {
+        "detected_by": "recurring_detect_and_schedule",
+        "actor": actor,
+        "reason": reason,
+    }
+
+    stmt = sqlite_insert(Recurring).values(
+        id=str(uuid4()),
+        merchant_id=merchant_id,
+        category_id=category_id,
+        schedule_type=inferred.schedule_type,
+        interval_n=inferred.interval_n,
+        anchor_date=inferred.anchor_date,
+        tolerance_days=inferred.tolerance_days,
+        active=True,
+        metadata_json=metadata,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=conflict_elements,
+        index_where=conflict_where,
+        set_={
+            "schedule_type": inferred.schedule_type,
+            "interval_n": inferred.interval_n,
+            "anchor_date": inferred.anchor_date,
+            "tolerance_days": inferred.tolerance_days,
+            "active": True,
+            "metadata_json": metadata,
+        },
+    )
+    session.execute(stmt)
     recurring = session.scalar(
         select(Recurring)
         .where(
@@ -288,36 +329,8 @@ def _upsert_recurring(
         .order_by(Recurring.id.asc())
         .limit(1)
     )
-
-    metadata = {
-        "detected_by": "recurring_detect_and_schedule",
-        "actor": actor,
-        "reason": reason,
-    }
-
     if recurring is None:
-        recurring = Recurring(
-            id=str(uuid4()),
-            merchant_id=merchant_id,
-            category_id=category_id,
-            schedule_type=inferred.schedule_type,
-            interval_n=inferred.interval_n,
-            anchor_date=inferred.anchor_date,
-            tolerance_days=inferred.tolerance_days,
-            active=True,
-            metadata_json=metadata,
-        )
-        session.add(recurring)
-        session.flush()
-        return recurring
-
-    recurring.schedule_type = inferred.schedule_type
-    recurring.interval_n = inferred.interval_n
-    recurring.anchor_date = inferred.anchor_date
-    recurring.tolerance_days = inferred.tolerance_days
-    recurring.active = True
-    recurring.metadata_json = metadata
-    session.flush()
+        raise RuntimeError("Recurring upsert did not return an active recurring row")
     return recurring
 
 

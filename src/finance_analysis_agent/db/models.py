@@ -558,6 +558,20 @@ class BudgetRollover(Base):
 
 class Recurring(Base):
     __tablename__ = "recurrings"
+    __table_args__ = (
+        Index(
+            "ux_recurrings_active_merchant_id",
+            "merchant_id",
+            unique=True,
+            sqlite_where=text("active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL"),
+        ),
+        Index(
+            "ux_recurrings_active_category_id",
+            "category_id",
+            unique=True,
+            sqlite_where=text("active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     merchant_id: Mapped[str | None] = mapped_column(ForeignKey("merchants.id"))

@@ -39,17 +39,21 @@ def upgrade() -> None:
         """
     )
 
+    op.execute("PRAGMA foreign_keys=OFF")
     with op.batch_alter_table("goal_allocations", recreate="always") as batch_op:
         batch_op.create_unique_constraint(
             "uq_goal_allocations_period_month_goal_id_account_id_allocation_type",
             ["period_month", "goal_id", "account_id", "allocation_type"],
         )
+    op.execute("PRAGMA foreign_keys=ON")
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("PRAGMA foreign_keys=OFF")
     with op.batch_alter_table("goal_allocations", recreate="always") as batch_op:
         batch_op.drop_constraint(
             "uq_goal_allocations_period_month_goal_id_account_id_allocation_type",
             type_="unique",
         )
+    op.execute("PRAGMA foreign_keys=ON")

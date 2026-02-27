@@ -53,6 +53,10 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("review_item_id", "created_at"),
             ("event_type", "created_at"),
         },
+        "recurrings": {
+            ("merchant_id",),
+            ("category_id",),
+        },
         "reconciliations": {
             ("account_id", "period_end"),
             ("status",),
@@ -232,8 +236,24 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
                     "AND name = 'ux_categories_root_name_parent_null'"
                 )
             ).scalar_one()
+            recurring_merchant_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_merchant_id'"
+                )
+            ).scalar_one()
+            recurring_category_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_category_id'"
+                )
+            ).scalar_one()
 
         assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
         assert "WHERE parent_id IS NULL" in root_category_index_sql
+        assert "WHERE active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL" in recurring_merchant_index_sql
+        assert "WHERE active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL" in recurring_category_index_sql
     finally:
         engine.dispose()
