@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Account, Merchant, Recurring, RecurringEvent, ReviewItem, Transaction
 from finance_analysis_agent.recurring import RecurringDetectRequest, recurring_detect_and_schedule
+from finance_analysis_agent.recurring.service import _infer_schedule
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
@@ -364,3 +365,19 @@ def test_recurring_detect_rejects_datetime_as_of_date(db_session: Session) -> No
             ),
             db_session,
         )
+
+
+def test_infer_schedule_non_monthly_allows_single_month_interval() -> None:
+    inferred = _infer_schedule(
+        dates=[
+            date(2026, 1, 1),
+            date(2026, 2, 5),  # 35 days
+            date(2026, 3, 12),  # 35 days
+        ],
+        minimum_occurrences=3,
+        tolerance_days_default=3,
+    )
+
+    assert inferred is not None
+    assert inferred.schedule_type == "non_monthly"
+    assert inferred.interval_n == 1
