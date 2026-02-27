@@ -10,6 +10,17 @@ from tests.helpers import alembic_config
 
 
 def _assert_expected_indexes(inspector: sa.Inspector) -> None:
+    """
+    Verify that the database contains a set of expected indexes for specific tables.
+    
+    Iterates a hard-coded mapping of table names to expected index column tuples and asserts each expected index exists on the inspected database. Raises an AssertionError identifying the table and index columns if any expected index is missing.
+    
+    Parameters:
+        inspector (sa.Inspector): SQLAlchemy inspector for the target database schema.
+    
+    Raises:
+        AssertionError: If an expected index for any table is not present.
+    """
     expected_indexes = {
         "accounts": {("type",), ("currency",)},
         "statements": {("account_id", "period_end")},
@@ -52,6 +63,10 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
         "review_item_events": {
             ("review_item_id", "created_at"),
             ("event_type", "created_at"),
+        },
+        "recurrings": {
+            ("merchant_id",),
+            ("category_id",),
         },
         "reconciliations": {
             ("account_id", "period_end"),
@@ -106,6 +121,19 @@ def test_alembic_upgrade_downgrade_smoke(tmp_path: Path) -> None:
 
 
 def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> None:
+    """
+    Validate that the upgraded database schema matches expected production constraints and indexes.
+    
+    Performs an Alembic upgrade to the head revision, inspects the resulting SQLite schema, and asserts:
+    - a set of expected tables exist,
+    - expected indexes are present (via _assert_expected_indexes),
+    - specific unique constraints exist or do not exist for tables such as statements, import_batches, balance_snapshots, budget_periods, budget_bucket_definitions, budget_bucket_category_mappings, goal_allocations, and recurring_events,
+    - required columns (and nullability where applicable) exist on import_batches, review_items, and reconciliations,
+    - certain partial/filtered indexes include the expected WHERE clauses and predicates (including checks for transaction source non-null, root category parent null, recurrings active/merchant/category predicates, and recurring-missed review filters).
+    
+    Parameters:
+        tmp_path (Path): Temporary directory fixture used to create the SQLite database file.
+    """
     database_file = tmp_path / "tur31_schema.db"
     database_url = f"sqlite:///{database_file}"
     config = alembic_config(database_url)
@@ -186,6 +214,14 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         assert ("budget_category_id",) in {
             tuple(item["column_names"]) for item in budget_bucket_mapping_uniques
         }
+        goal_allocation_uniques = inspector.get_unique_constraints("goal_allocations")
+        assert ("period_month", "goal_id", "account_id", "allocation_type") in {
+            tuple(item["column_names"]) for item in goal_allocation_uniques
+        }
+        recurring_event_uniques = inspector.get_unique_constraints("recurring_events")
+        assert ("recurring_id", "expected_date") in {
+            tuple(item["column_names"]) for item in recurring_event_uniques
+        }
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
         assert {
@@ -228,8 +264,34 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
                     "AND name = 'ux_categories_root_name_parent_null'"
                 )
             ).scalar_one()
+            recurring_merchant_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_merchant_id'"
+                )
+            ).scalar_one()
+            recurring_category_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_category_id'"
+                )
+            ).scalar_one()
+            recurring_missed_review_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_review_items_active_recurring_missed_event'"
+                )
+            ).scalar_one()
 
         assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
         assert "WHERE parent_id IS NULL" in root_category_index_sql
+        assert "WHERE active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL" in recurring_merchant_index_sql
+        assert "WHERE active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL" in recurring_category_index_sql
+        assert "AND item_type = 'recurring_missed_event'" in recurring_missed_review_index_sql
+        assert "AND source = 'recurring'" in recurring_missed_review_index_sql
+        assert "AND status IN ('to_review', 'in_progress')" in recurring_missed_review_index_sql
     finally:
         engine.dispose()
