@@ -87,15 +87,28 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
     raise ValueError(f"{field_name} must be a boolean")
 
 
+def _parse_int(value: object, *, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+
+
 def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringRequest:
     actor = _parse_non_empty(request.actor, field_name="actor")
     reason = _parse_non_empty(request.reason, field_name="reason")
     if not isinstance(request.as_of_date, date) or isinstance(request.as_of_date, datetime):
         raise ValueError("as_of_date must be a date")
-    lookback_days = int(request.lookback_days)
-    minimum_occurrences = int(request.minimum_occurrences)
-    tolerance_days_default = int(request.tolerance_days_default)
-    max_expected_iterations = int(request.max_expected_iterations)
+    lookback_days = _parse_int(request.lookback_days, field_name="lookback_days")
+    minimum_occurrences = _parse_int(request.minimum_occurrences, field_name="minimum_occurrences")
+    tolerance_days_default = _parse_int(
+        request.tolerance_days_default,
+        field_name="tolerance_days_default",
+    )
+    max_expected_iterations = _parse_int(
+        request.max_expected_iterations,
+        field_name="max_expected_iterations",
+    )
     create_review_items = _parse_bool(
         request.create_review_items,
         field_name="create_review_items",
@@ -553,18 +566,17 @@ def recurring_detect_and_schedule(
                 )
             continue
 
+        expected_dates = _expected_dates(
+            inferred=inferred,
+            as_of_date=validated.as_of_date,
+            max_iterations=validated.max_expected_iterations,
+        )
         recurring = _upsert_recurring(
             group_key=group_key,
             inferred=inferred,
             actor=validated.actor,
             reason=validated.reason,
             session=session,
-        )
-
-        expected_dates = _expected_dates(
-            inferred=inferred,
-            as_of_date=validated.as_of_date,
-            max_iterations=validated.max_expected_iterations,
         )
         used_txn_ids: set[str] = set()
         observed_count = 0
