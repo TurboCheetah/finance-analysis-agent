@@ -90,6 +90,23 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
 def _parse_int(value: object, *, field_name: str) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} must be an integer")
+        if normalized[0] in {"+", "-"}:
+            digits = normalized[1:]
+        else:
+            digits = normalized
+        if not digits or not digits.isdigit():
+            raise ValueError(f"{field_name} must be an integer")
+        return int(normalized)
     try:
         return int(value)
     except (TypeError, ValueError) as exc:

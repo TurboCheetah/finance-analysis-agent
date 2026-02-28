@@ -345,6 +345,19 @@ def test_recurring_detect_rejects_boolean_lookback_days(db_session: Session) -> 
         )
 
 
+def test_recurring_detect_rejects_fractional_lookback_days(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="lookback_days must be an integer"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                lookback_days=2.9,  # type: ignore[arg-type]
+            ),
+            db_session,
+        )
+
+
 def test_recurring_detect_rejects_datetime_as_of_date(db_session: Session) -> None:
     with pytest.raises(ValueError, match="as_of_date must be a date"):
         recurring_detect_and_schedule(
