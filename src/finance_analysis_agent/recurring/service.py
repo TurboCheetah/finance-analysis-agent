@@ -245,7 +245,7 @@ def _infer_schedule(
         interval_n = 1
     elif median_interval >= 34 and max_deviation <= max(7, math.ceil(median_interval * 0.20)):
         schedule_type = "non_monthly"
-        interval_n = max(1, round(median_interval / 30))
+        interval_n = max(1, median_interval // 30)
     else:
         return None
 

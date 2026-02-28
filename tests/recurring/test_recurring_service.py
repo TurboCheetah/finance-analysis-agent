@@ -358,6 +358,32 @@ def test_recurring_detect_rejects_fractional_lookback_days(db_session: Session) 
         )
 
 
+def test_recurring_detect_rejects_fractional_max_expected_iterations(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="max_expected_iterations must be an integer"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                max_expected_iterations=10.5,  # type: ignore[arg-type]
+            ),
+            db_session,
+        )
+
+
+def test_recurring_detect_rejects_non_positive_max_expected_iterations(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="max_expected_iterations must be > 0"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                max_expected_iterations=0,
+            ),
+            db_session,
+        )
+
+
 def test_recurring_detect_rejects_datetime_as_of_date(db_session: Session) -> None:
     with pytest.raises(ValueError, match="as_of_date must be a date"):
         recurring_detect_and_schedule(
@@ -384,6 +410,22 @@ def test_infer_schedule_non_monthly_allows_single_month_interval() -> None:
     assert inferred is not None
     assert inferred.schedule_type == "non_monthly"
     assert inferred.interval_n == 1
+
+
+def test_infer_schedule_non_monthly_uses_floor_interval_months() -> None:
+    inferred = _infer_schedule(
+        dates=[
+            date(2026, 1, 1),
+            date(2026, 3, 17),  # 75 days
+            date(2026, 5, 31),  # 75 days
+        ],
+        minimum_occurrences=3,
+        tolerance_days_default=3,
+    )
+
+    assert inferred is not None
+    assert inferred.schedule_type == "non_monthly"
+    assert inferred.interval_n == 2
 
 
 def test_expected_dates_monthly_preserves_end_of_month_anchor() -> None:
