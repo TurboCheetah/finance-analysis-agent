@@ -407,3 +407,21 @@ def test_expected_dates_monthly_preserves_end_of_month_anchor() -> None:
         date(2026, 3, 31),
         date(2026, 4, 30),
     ]
+
+
+def test_expected_dates_monthly_stops_at_upper_date_bound() -> None:
+    inferred = _InferredSchedule(
+        schedule_type="monthly",
+        interval_n=1,
+        anchor_date=date.max,
+        tolerance_days=3,
+        dates=[date.max],
+    )
+
+    expected = _expected_dates(
+        inferred=inferred,
+        as_of_date=date.max,
+        max_iterations=10,
+    )
+
+    assert expected == [date.max]

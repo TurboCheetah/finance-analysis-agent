@@ -157,6 +157,10 @@ def _validate_request(request: RecurringDetectRequest) -> _ValidatedRecurringReq
 def _add_months(value: date, *, months: int) -> date:
     month_index = (value.month - 1) + months
     year = value.year + (month_index // 12)
+    if year > date.max.year:
+        return date.max
+    if year < date.min.year:
+        return date.min
     month = (month_index % 12) + 1
     day = min(value.day, monthrange(year, month)[1])
     return date(year, month, day)
@@ -291,7 +295,10 @@ def _expected_dates(
                 )
             expected.append(current)
             guard += 1
-            current = _add_months(inferred.anchor_date, months=guard * months_step)
+            next_current = _add_months(inferred.anchor_date, months=guard * months_step)
+            if next_current <= current:
+                break
+            current = next_current
         return expected
 
     while current <= as_of_date:
