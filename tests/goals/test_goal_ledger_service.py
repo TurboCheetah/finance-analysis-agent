@@ -308,7 +308,42 @@ def test_goal_ledger_projection_uses_monthly_contribution_precedence(db_session:
 
     snapshot = result.goals[0]
     assert snapshot.months_to_completion == 6
-    assert snapshot.projected_completion_date == date(2026, 7, 1)
+    assert snapshot.projected_completion_date == date(2026, 7, 31)
+    assert snapshot.status == "at_risk"
+    assert any(cause.code == "goal_projection_after_target" for cause in result.causes)
+
+
+def test_goal_ledger_projection_month_end_can_mark_at_risk_within_target_month(db_session: Session) -> None:
+    _seed_account(db_session)
+    _seed_goal(
+        db_session,
+        goal_id="goal-save",
+        target_amount="500.00",
+        target_date=date(2026, 7, 15),
+        monthly_contribution="50.00",
+    )
+    db_session.flush()
+
+    result = goal_ledger_compute(
+        GoalLedgerComputeRequest(
+            period_month="2026-02",
+            available_funds="500.00",
+            actor="goal-planner",
+            reason="monthly funding",
+            allocations=[
+                GoalAllocationInput(
+                    goal_id="goal-save",
+                    account_id="acct-1",
+                    amount="200.00",
+                )
+            ],
+        ),
+        db_session,
+    )
+
+    snapshot = result.goals[0]
+    assert snapshot.months_to_completion == 6
+    assert snapshot.projected_completion_date == date(2026, 7, 31)
     assert snapshot.status == "at_risk"
     assert any(cause.code == "goal_projection_after_target" for cause in result.causes)
 

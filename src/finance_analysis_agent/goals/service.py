@@ -94,6 +94,11 @@ def _add_months(value: date, *, months: int) -> date:
     return date(year, month, day)
 
 
+def _month_end(value: date) -> date:
+    day = monthrange(value.year, value.month)[1]
+    return date(value.year, value.month, day)
+
+
 def _validate_request(request: GoalLedgerComputeRequest) -> _ValidatedGoalRequest:
     period_start, period_end = _period_bounds(request.period_month)
     available_funds = _parse_decimal(request.available_funds, field_name="available_funds", non_negative=True)
@@ -392,10 +397,11 @@ def goal_ledger_compute(
             computed_status = "completed"
         elif pace is not None and pace > 0:
             months_to_completion = _months_required(remaining=remaining_amount, pace=pace)
-            projected_completion_date = _add_months(
+            projected_period = _add_months(
                 validated.period_start,
                 months=max(months_to_completion - 1, 0),
             )
+            projected_completion_date = _month_end(projected_period)
             computed_status = "on_track"
             if goal.target_date is not None and projected_completion_date > goal.target_date:
                 computed_status = "at_risk"
