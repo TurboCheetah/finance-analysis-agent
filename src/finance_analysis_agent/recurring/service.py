@@ -88,6 +88,8 @@ def _parse_bool(value: object, *, field_name: str) -> bool:
 
 
 def _parse_int(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
     try:
         return int(value)
     except (TypeError, ValueError) as exc:
