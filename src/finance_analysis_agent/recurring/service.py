@@ -263,11 +263,10 @@ def _advance_expected_date(*, schedule_type: str, interval_n: int, current: date
         return current + timedelta(days=7)
     if schedule_type == "biweekly":
         return current + timedelta(days=14)
-    if schedule_type == "monthly":
-        return _add_months(current, months=1)
-    if schedule_type == "non_monthly":
-        return _add_months(current, months=max(1, interval_n))
-    raise ValueError(f"Unsupported schedule_type: {schedule_type}")
+    raise ValueError(
+        "Unsupported schedule_type for iterative advance: "
+        f"{schedule_type}; use anchor-based monthly expected-date generation"
+    )
 
 
 def _expected_dates(

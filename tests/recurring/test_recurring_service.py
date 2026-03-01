@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import Account, Merchant, Recurring, RecurringEvent, ReviewItem, Transaction
 from finance_analysis_agent.recurring import RecurringDetectRequest, recurring_detect_and_schedule
-from finance_analysis_agent.recurring.service import _InferredSchedule, _expected_dates, _infer_schedule
+from finance_analysis_agent.recurring.service import (
+    _InferredSchedule,
+    _advance_expected_date,
+    _expected_dates,
+    _infer_schedule,
+)
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
@@ -426,6 +431,15 @@ def test_infer_schedule_non_monthly_uses_floor_interval_months() -> None:
     assert inferred is not None
     assert inferred.schedule_type == "non_monthly"
     assert inferred.interval_n == 2
+
+
+def test_advance_expected_date_rejects_month_based_schedule_types() -> None:
+    with pytest.raises(ValueError, match="Unsupported schedule_type for iterative advance"):
+        _advance_expected_date(
+            schedule_type="monthly",
+            interval_n=1,
+            current=date(2026, 1, 31),
+        )
 
 
 def test_expected_dates_monthly_preserves_end_of_month_anchor() -> None:
