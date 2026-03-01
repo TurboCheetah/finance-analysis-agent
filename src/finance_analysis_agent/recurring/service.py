@@ -267,7 +267,7 @@ def _infer_schedule(
     )
 
 
-def _advance_expected_date(*, schedule_type: str, interval_n: int, current: date) -> date:
+def _advance_expected_date(*, schedule_type: str, _interval_n: int, current: date) -> date:
     if schedule_type == "weekly":
         return current + timedelta(days=7)
     if schedule_type == "biweekly":
@@ -323,7 +323,7 @@ def _expected_dates(
         expected.append(current)
         current = _advance_expected_date(
             schedule_type=inferred.schedule_type,
-            interval_n=inferred.interval_n,
+            _interval_n=inferred.interval_n,
             current=current,
         )
         guard += 1

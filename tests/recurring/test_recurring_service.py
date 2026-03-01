@@ -464,7 +464,7 @@ def test_advance_expected_date_rejects_month_based_schedule_types() -> None:
     with pytest.raises(ValueError, match="Unsupported schedule_type for iterative advance"):
         _advance_expected_date(
             schedule_type="monthly",
-            interval_n=1,
+            _interval_n=1,
             current=date(2026, 1, 31),
         )
 
