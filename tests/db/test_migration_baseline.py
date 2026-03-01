@@ -53,6 +53,10 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("review_item_id", "created_at"),
             ("event_type", "created_at"),
         },
+        "recurrings": {
+            ("merchant_id",),
+            ("category_id",),
+        },
         "reconciliations": {
             ("account_id", "period_end"),
             ("status",),
@@ -186,6 +190,32 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
         assert ("budget_category_id",) in {
             tuple(item["column_names"]) for item in budget_bucket_mapping_uniques
         }
+        goal_allocation_uniques = inspector.get_unique_constraints("goal_allocations")
+        assert ("period_month", "goal_id", "account_id", "allocation_type") in {
+            tuple(item["column_names"]) for item in goal_allocation_uniques
+        }
+        recurring_event_uniques = inspector.get_unique_constraints("recurring_events")
+        assert ("recurring_id", "expected_date") in {
+            tuple(item["column_names"]) for item in recurring_event_uniques
+        }
+        recurring_checks = inspector.get_check_constraints("recurrings")
+        recurring_check_sql = {
+            item.get("name", ""): (item.get("sqltext") or "")
+            for item in recurring_checks
+        }
+        recurring_key_shape_check_name = next(
+            (
+                name
+                for name in recurring_check_sql
+                if name.endswith("ck_recurrings_active_exactly_one_key")
+            ),
+            None,
+        )
+        assert recurring_key_shape_check_name is not None
+        recurring_key_shape_check_sql = recurring_check_sql[recurring_key_shape_check_name]
+        assert "active = 0 OR" in recurring_key_shape_check_sql
+        assert "merchant_id IS NOT NULL AND category_id IS NULL" in recurring_key_shape_check_sql
+        assert "merchant_id IS NULL AND category_id IS NOT NULL" in recurring_key_shape_check_sql
 
         import_batch_columns = {column["name"] for column in inspector.get_columns("import_batches")}
         assert {
@@ -228,8 +258,37 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
                     "AND name = 'ux_categories_root_name_parent_null'"
                 )
             ).scalar_one()
+            recurring_merchant_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_merchant_id'"
+                )
+            ).scalar_one()
+            recurring_category_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_recurrings_active_category_id'"
+                )
+            ).scalar_one()
+            recurring_missed_review_index_sql = connection.execute(
+                sa.text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'index' "
+                    "AND name = 'ux_review_items_active_recurring_missed_event'"
+                )
+            ).scalar_one()
 
         assert "WHERE source_transaction_id IS NOT NULL" in partial_index_sql
         assert "WHERE parent_id IS NULL" in root_category_index_sql
+        assert "CREATE UNIQUE INDEX" in recurring_merchant_index_sql
+        assert "CREATE UNIQUE INDEX" in recurring_category_index_sql
+        assert "WHERE active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL" in recurring_merchant_index_sql
+        assert "WHERE active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL" in recurring_category_index_sql
+        assert "ref_table = 'recurring_events'" in recurring_missed_review_index_sql
+        assert "AND item_type = 'recurring_missed_event'" in recurring_missed_review_index_sql
+        assert "AND source = 'recurring'" in recurring_missed_review_index_sql
+        assert "AND status IN ('to_review', 'in_progress')" in recurring_missed_review_index_sql
     finally:
         engine.dispose()

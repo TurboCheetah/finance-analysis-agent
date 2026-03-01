@@ -342,12 +342,26 @@ class ReviewItem(Base):
                 "AND status IN ('to_review', 'in_progress')"
             ),
         ),
+        Index(
+            "ux_review_items_active_recurring_missed_event",
+            "ref_table",
+            "ref_id",
+            "item_type",
+            "source",
+            unique=True,
+            sqlite_where=text(
+                "ref_table = 'recurring_events' "
+                "AND item_type = 'recurring_missed_event' "
+                "AND source = 'recurring' "
+                "AND status IN ('to_review', 'in_progress')"
+            ),
+        ),
         CheckConstraint(
             "status IN ('to_review', 'in_progress', 'resolved', 'rejected')",
             name="ck_review_items_status",
         ),
         CheckConstraint(
-            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'unknown')",
+            "source IN ('pdf_extract', 'rules', 'dedupe', 'categorize', 'recurring', 'unknown')",
             name="ck_review_items_source",
         ),
     )
@@ -558,6 +572,26 @@ class BudgetRollover(Base):
 
 class Recurring(Base):
     __tablename__ = "recurrings"
+    __table_args__ = (
+        CheckConstraint(
+            "active = 0 OR "
+            "((merchant_id IS NOT NULL AND category_id IS NULL) "
+            "OR (merchant_id IS NULL AND category_id IS NOT NULL))",
+            name="ck_recurrings_active_exactly_one_key",
+        ),
+        Index(
+            "ux_recurrings_active_merchant_id",
+            "merchant_id",
+            unique=True,
+            sqlite_where=text("active = 1 AND merchant_id IS NOT NULL AND category_id IS NULL"),
+        ),
+        Index(
+            "ux_recurrings_active_category_id",
+            "category_id",
+            unique=True,
+            sqlite_where=text("active = 1 AND category_id IS NOT NULL AND merchant_id IS NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     merchant_id: Mapped[str | None] = mapped_column(ForeignKey("merchants.id"))
@@ -572,6 +606,13 @@ class Recurring(Base):
 
 class RecurringEvent(Base):
     __tablename__ = "recurring_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "recurring_id",
+            "expected_date",
+            name="uq_recurring_events_recurring_id_expected_date",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     recurring_id: Mapped[str] = mapped_column(ForeignKey("recurrings.id"), nullable=False)
@@ -595,6 +636,15 @@ class Goal(Base):
 
 class GoalAllocation(Base):
     __tablename__ = "goal_allocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "period_month",
+            "goal_id",
+            "account_id",
+            "allocation_type",
+            name="uq_goal_allocations_period_month_goal_id_account_id_allocation_type",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     goal_id: Mapped[str] = mapped_column(ForeignKey("goals.id"), nullable=False)

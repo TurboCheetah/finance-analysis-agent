@@ -22,6 +22,7 @@ class ReviewSource(StrEnum):
     RULES = "rules"
     DEDUPE = "dedupe"
     CATEGORIZE = "categorize"
+    RECURRING = "recurring"
     UNKNOWN = "unknown"
 
 
