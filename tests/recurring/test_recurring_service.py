@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 from sqlalchemy import func, select
@@ -358,6 +359,32 @@ def test_recurring_detect_rejects_fractional_lookback_days(db_session: Session) 
                 actor="scheduler",
                 reason="validation",
                 lookback_days=2.9,  # type: ignore[arg-type]
+            ),
+            db_session,
+        )
+
+
+def test_recurring_detect_rejects_fractional_decimal_lookback_days(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="lookback_days must be an integer"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                lookback_days=Decimal("2.9"),  # type: ignore[arg-type]
+            ),
+            db_session,
+        )
+
+
+def test_recurring_detect_rejects_fractional_fraction_lookback_days(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="lookback_days must be an integer"):
+        recurring_detect_and_schedule(
+            RecurringDetectRequest(
+                as_of_date=date(2026, 1, 31),
+                actor="scheduler",
+                reason="validation",
+                lookback_days=Fraction(3, 2),  # type: ignore[arg-type]
             ),
             db_session,
         )

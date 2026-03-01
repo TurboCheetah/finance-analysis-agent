@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from calendar import monthrange
 from statistics import median
 import math
+from numbers import Number
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -107,6 +108,14 @@ def _parse_int(value: object, *, field_name: str) -> int:
         if not digits or not digits.isdigit():
             raise ValueError(f"{field_name} must be an integer")
         return int(normalized)
+    if isinstance(value, Number):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{field_name} must be an integer") from exc
+        if value != parsed:
+            raise ValueError(f"{field_name} must be an integer")
+        return parsed
     try:
         return int(value)
     except (TypeError, ValueError) as exc:
