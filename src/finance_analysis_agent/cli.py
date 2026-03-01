@@ -10,8 +10,12 @@ from typing import cast
 import typer
 
 from finance_analysis_agent.db.engine import get_session_factory
-from finance_analysis_agent.reporting import ReportType, ReportingGenerateRequest, reporting_generate
-from finance_analysis_agent.reporting.types import ReportingGenerateResult
+from finance_analysis_agent.reporting import (
+    ReportType,
+    ReportingGenerateRequest,
+    ReportingGenerateResult,
+    reporting_generate,
+)
 
 app = typer.Typer(help="Finance Analysis Agent CLI")
 reporting_app = typer.Typer(help="Reporting workflows")
@@ -29,13 +33,12 @@ def _default_output_path(run_metadata_id: str) -> Path:
     return Path(f"reporting-run-{run_metadata_id}.json")
 
 
-def _result_json_payload(result: object) -> dict[str, object]:
-    typed_result = cast(ReportingGenerateResult, result)
+def _result_json_payload(result: ReportingGenerateResult) -> dict[str, object]:
     return {
-        "run_metadata_id": typed_result.run_metadata_id,
-        "period_start": typed_result.period_start.isoformat(),
-        "period_end": typed_result.period_end.isoformat(),
-        "report_types": [item.value for item in typed_result.report_types],
+        "run_metadata_id": result.run_metadata_id,
+        "period_start": result.period_start.isoformat(),
+        "period_end": result.period_end.isoformat(),
+        "report_types": [item.value for item in result.report_types],
         "reports": [
             {
                 "report_id": report.report_id,
@@ -43,7 +46,7 @@ def _result_json_payload(result: object) -> dict[str, object]:
                 "payload_hash": report.payload_hash,
                 "payload_json": report.payload_json,
             }
-            for report in typed_result.reports
+            for report in result.reports
         ],
         "causes": [
             {
@@ -51,7 +54,7 @@ def _result_json_payload(result: object) -> dict[str, object]:
                 "message": cause.message,
                 "severity": cause.severity,
             }
-            for cause in typed_result.causes
+            for cause in result.causes
         ],
     }
 

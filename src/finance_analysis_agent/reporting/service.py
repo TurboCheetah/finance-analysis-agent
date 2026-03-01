@@ -12,7 +12,7 @@ import logging
 import re
 from uuid import uuid4
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import Date, case, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
 from finance_analysis_agent.db.models import (
@@ -362,7 +362,7 @@ def _build_category_trends_payload(validated: _ValidatedRequest, session: Sessio
     category_name_rows = session.execute(
         select(Category.id, Category.name).where(Category.id.in_(sorted(category_ids))).order_by(Category.id.asc())
     ).all()
-    category_names = {category_id: name for category_id, name in category_name_rows}
+    category_names = dict(category_name_rows)
 
     month_items: list[dict[str, object]] = []
     for month in sorted(spending_by_month_category):
@@ -414,38 +414,88 @@ def _build_net_worth_payload(validated: _ValidatedRequest, session: Session) -> 
     )
 
     points = _net_worth_points(validated.period_start, validated.period_end)
+    account_ids = [account_id for account_id, _ in account_rows]
+
+    snapshot_lookup: dict[tuple[date, str], tuple[Decimal, date, str]] = {}
+    if account_ids and points:
+        point_selects = [
+            select(literal(point, type_=Date).label("report_point"))
+            for point in points
+        ]
+        if len(point_selects) == 1:
+            report_points_cte = point_selects[0].cte("report_points")
+        else:
+            report_points_cte = union_all(*point_selects).cte("report_points")
+
+        ranked_snapshots = (
+            select(
+                report_points_cte.c.report_point.label("report_point"),
+                BalanceSnapshot.account_id.label("account_id"),
+                BalanceSnapshot.balance.label("balance"),
+                BalanceSnapshot.snapshot_date.label("snapshot_date"),
+                BalanceSnapshot.source.label("source"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        report_points_cte.c.report_point,
+                        BalanceSnapshot.account_id,
+                    ),
+                    order_by=(
+                        BalanceSnapshot.snapshot_date.desc(),
+                        source_priority.asc(),
+                        BalanceSnapshot.created_at.desc(),
+                        BalanceSnapshot.id.desc(),
+                    ),
+                )
+                .label("row_num"),
+            )
+            .join(
+                BalanceSnapshot,
+                (BalanceSnapshot.account_id.in_(account_ids))
+                & (BalanceSnapshot.snapshot_date <= report_points_cte.c.report_point),
+            )
+            .cte("ranked_snapshots")
+        )
+
+        rows = session.execute(
+            select(
+                ranked_snapshots.c.report_point,
+                ranked_snapshots.c.account_id,
+                ranked_snapshots.c.balance,
+                ranked_snapshots.c.snapshot_date,
+                ranked_snapshots.c.source,
+            )
+            .where(ranked_snapshots.c.row_num == 1)
+            .order_by(
+                ranked_snapshots.c.report_point.asc(),
+                ranked_snapshots.c.account_id.asc(),
+            )
+        ).all()
+        snapshot_lookup = {
+            (report_point, account_id): (Decimal(balance), snapshot_date, source)
+            for report_point, account_id, balance, snapshot_date, source in rows
+        }
+
     timeline: list[dict[str, object]] = []
 
     for point in points:
         point_accounts: list[dict[str, object]] = []
         total = Decimal("0.00")
         for account_id, account_name in account_rows:
-            snapshot = session.scalar(
-                select(BalanceSnapshot)
-                .where(
-                    BalanceSnapshot.account_id == account_id,
-                    BalanceSnapshot.snapshot_date <= point,
-                )
-                .order_by(
-                    BalanceSnapshot.snapshot_date.desc(),
-                    source_priority.asc(),
-                    BalanceSnapshot.created_at.desc(),
-                    BalanceSnapshot.id.desc(),
-                )
-                .limit(1)
-            )
+            snapshot = snapshot_lookup.get((point, account_id))
             if snapshot is None:
                 continue
 
-            balance = _money(Decimal(snapshot.balance))
+            balance_value, snapshot_date, source = snapshot
+            balance = _money(balance_value)
             total = _money(total + balance)
             point_accounts.append(
                 {
                     "account_id": account_id,
                     "account_name": account_name,
                     "balance": _format_money(balance),
-                    "snapshot_date": snapshot.snapshot_date.isoformat(),
-                    "source": snapshot.source,
+                    "snapshot_date": snapshot_date.isoformat(),
+                    "source": source,
                 }
             )
 
