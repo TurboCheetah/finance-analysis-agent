@@ -17,6 +17,7 @@ from finance_analysis_agent.db.models import (
     Category,
     Goal,
     GoalAllocation,
+    GoalEvent,
     Report,
     RunMetadata,
     Transaction,
@@ -187,6 +188,28 @@ def _seed_goal_baseline(session: Session) -> None:
             amount=Decimal("300.00"),
             allocation_type="manual",
             created_at=utcnow(),
+        )
+    )
+
+
+def _seed_goal_event(
+    session: Session,
+    *,
+    goal_event_id: str,
+    goal_id: str,
+    event_date: date,
+    amount: str,
+    related_transaction_id: str | None = None,
+) -> None:
+    session.add(
+        GoalEvent(
+            id=goal_event_id,
+            goal_id=goal_id,
+            event_date=event_date,
+            event_type="manual_adjustment",
+            amount=Decimal(amount),
+            related_transaction_id=related_transaction_id,
+            metadata_json=None,
         )
     )
 
@@ -406,6 +429,39 @@ def test_reporting_generate_requires_budget_id_for_budget_vs_actual(db_session: 
             ),
             db_session,
         )
+
+
+def test_goal_progress_account_scope_keeps_goal_events_without_related_transaction(db_session: Session) -> None:
+    _seed_reporting_baseline(db_session)
+    db_session.flush()
+    goal = db_session.get(Goal, "goal-car")
+    assert goal is not None
+    goal.spending_reduces_progress = True
+    _seed_goal_event(
+        db_session,
+        goal_event_id="goal-event-no-txn",
+        goal_id="goal-car",
+        event_date=date(2026, 2, 22),
+        amount="-50.00",
+        related_transaction_id=None,
+    )
+    db_session.flush()
+
+    result = reporting_generate(
+        ReportingGenerateRequest(
+            actor="tester",
+            reason="goal progress account scope",
+            period_month="2026-02",
+            report_types=[ReportType.GOAL_PROGRESS],
+            account_ids=["acct-checking"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    goal_payload = result.reports[0].payload_json["goals"][0]
+    assert goal_payload["spending_total"] == "50.00"
+    assert goal_payload["progress_amount"] == "250.00"
 
 
 def test_reporting_generate_marks_run_failed_when_budget_is_missing(db_session: Session) -> None:
