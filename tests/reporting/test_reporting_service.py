@@ -431,7 +431,7 @@ def test_reporting_generate_requires_budget_id_for_budget_vs_actual(db_session: 
         )
 
 
-def test_goal_progress_account_scope_keeps_goal_events_without_related_transaction(db_session: Session) -> None:
+def test_goal_progress_account_scope_excludes_goal_events_without_related_transaction(db_session: Session) -> None:
     _seed_reporting_baseline(db_session)
     db_session.flush()
     goal = db_session.get(Goal, "goal-car")
@@ -447,7 +447,7 @@ def test_goal_progress_account_scope_keeps_goal_events_without_related_transacti
     )
     db_session.flush()
 
-    result = reporting_generate(
+    scoped = reporting_generate(
         ReportingGenerateRequest(
             actor="tester",
             reason="goal progress account scope",
@@ -459,9 +459,23 @@ def test_goal_progress_account_scope_keeps_goal_events_without_related_transacti
     )
     db_session.flush()
 
-    goal_payload = result.reports[0].payload_json["goals"][0]
-    assert goal_payload["spending_total"] == "50.00"
-    assert goal_payload["progress_amount"] == "250.00"
+    unscoped = reporting_generate(
+        ReportingGenerateRequest(
+            actor="tester",
+            reason="goal progress unscoped",
+            period_month="2026-02",
+            report_types=[ReportType.GOAL_PROGRESS],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    scoped_goal_payload = scoped.reports[0].payload_json["goals"][0]
+    unscoped_goal_payload = unscoped.reports[0].payload_json["goals"][0]
+    assert scoped_goal_payload["spending_total"] == "0.00"
+    assert scoped_goal_payload["progress_amount"] == "300.00"
+    assert unscoped_goal_payload["spending_total"] == "50.00"
+    assert unscoped_goal_payload["progress_amount"] == "250.00"
 
 
 def test_reporting_generate_marks_run_failed_when_budget_is_missing(db_session: Session) -> None:

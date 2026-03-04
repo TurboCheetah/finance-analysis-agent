@@ -701,10 +701,7 @@ def _build_goal_progress_payload(validated: _ValidatedRequest, session: Session)
         .order_by(GoalEvent.goal_id.asc(), GoalEvent.event_date.asc(), GoalEvent.id.asc())
     )
     if validated.account_ids:
-        spending_stmt = spending_stmt.where(
-            (Transaction.account_id.in_(validated.account_ids))
-            | (Transaction.id.is_(None))
-        )
+        spending_stmt = spending_stmt.where(Transaction.account_id.in_(validated.account_ids))
 
     spending_rows = session.execute(spending_stmt).all()
     spending_by_goal: dict[str, Decimal] = {}
