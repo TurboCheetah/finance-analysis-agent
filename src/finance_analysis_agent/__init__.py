@@ -48,6 +48,14 @@ from finance_analysis_agent.recurring import (
     RecurringScheduleSnapshot,
     recurring_detect_and_schedule,
 )
+from finance_analysis_agent.reporting import (
+    GeneratedReport,
+    ReportRunCause,
+    ReportType,
+    ReportingGenerateRequest,
+    ReportingGenerateResult,
+    reporting_generate,
+)
 from finance_analysis_agent.rules import (
     RuleApplyResult,
     RuleDiff,
@@ -125,6 +133,11 @@ __all__ = [
     "RecurringDetectResult",
     "RecurringEventWarning",
     "RecurringScheduleSnapshot",
+    "GeneratedReport",
+    "ReportRunCause",
+    "ReportType",
+    "ReportingGenerateRequest",
+    "ReportingGenerateResult",
     "ReviewItemStatus",
     "ReviewQueueListRequest",
     "ReviewQueueListResult",
@@ -145,5 +158,6 @@ __all__ = [
     "get_suggestion_metrics",
     "list_review_items",
     "recurring_detect_and_schedule",
+    "reporting_generate",
     "txn_dedupe_match",
 ]

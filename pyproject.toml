@@ -7,6 +7,7 @@ dependencies = [
     "alembic>=1.18.4",
     "pypdf>=4.3.1",
     "sqlalchemy>=2.0.47",
+    "typer>=0.24.1",
 ]
 
 [dependency-groups]
@@ -17,6 +18,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[project.scripts]
+finance-analysis-agent = "finance_analysis_agent.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
