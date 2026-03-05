@@ -189,6 +189,56 @@ def test_restore_bundle_rejects_unsupported_schema_versions(db_session: Session,
         restore_engine.dispose()
 
 
+def test_restore_bundle_rejects_unsupported_diagnostics_schema_version(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(
+            actor="tester",
+            reason="diagnostics schema version test",
+            output_dir=bundle_dir,
+        ),
+        db_session,
+    )
+
+    diagnostics_path = bundle_dir / "diagnostics.json"
+    diagnostics_payload = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics_payload["bundle_schema_version"] = "9.9.9"
+    diagnostics_path.write_text(
+        json.dumps(diagnostics_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for artifact in manifest_payload["artifacts"]:
+        if artifact["path"] == "diagnostics.json":
+            artifact["sha256"] = hashlib.sha256(diagnostics_path.read_bytes()).hexdigest()
+            artifact["size_bytes"] = diagnostics_path.stat().st_size
+            break
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_diagnostics_schema.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Unsupported diagnostics schema version"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="restore diagnostics schema mismatch",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
 def test_restore_bundle_rejects_path_traversal_artifact_entries(db_session: Session, tmp_path: Path) -> None:
     seed_backup_fixture(db_session)
     db_session.commit()
@@ -225,6 +275,58 @@ def test_restore_bundle_rejects_path_traversal_artifact_entries(db_session: Sess
                 ),
                 restore_session,
             )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_parses_boolean_strings_safely(db_session: Session, tmp_path: Path) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(actor="tester", reason="boolean parse test", output_dir=bundle_dir),
+        db_session,
+    )
+
+    transactions_path = bundle_dir / "json" / "transactions.jsonl"
+    original_lines = transactions_path.read_text(encoding="utf-8").splitlines()
+    mutated_lines: list[str] = []
+    for raw_line in original_lines:
+        payload = json.loads(raw_line)
+        if payload["id"] == "txn-1":
+            payload["excluded"] = "false"
+        mutated_lines.append(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    transactions_path.write_text("\n".join(mutated_lines) + "\n", encoding="utf-8")
+
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for artifact in manifest_payload["artifacts"]:
+        if artifact["path"] == "json/transactions.jsonl":
+            artifact["sha256"] = hashlib.sha256(transactions_path.read_bytes()).hexdigest()
+            artifact["size_bytes"] = transactions_path.stat().st_size
+            break
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_boolean_parse.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        result = restore_bundle(
+            RestoreBundleRequest(
+                actor="tester",
+                reason="restore boolean parse",
+                bundle_dir=bundle_dir,
+            ),
+            restore_session,
+        )
+        assert result.restored_table_counts["transactions"] == 2
+        excluded = restore_session.execute(
+            select(Base.metadata.tables["transactions"].c.excluded).where(
+                Base.metadata.tables["transactions"].c.id == "txn-1"
+            )
+        ).scalar_one()
+        assert excluded is False
     finally:
         restore_session.close()
         restore_engine.dispose()

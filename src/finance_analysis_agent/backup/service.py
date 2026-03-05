@@ -351,7 +351,15 @@ def _coerce_value(value: object, column: Column[Any]) -> object:
     if isinstance(column_type, JsonType):
         return value
     if isinstance(column_type, Boolean):
-        return bool(value)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "false"}:
+                return normalized == "true"
+        raise ValueError(f"Expected boolean value for {column.name}")
     if isinstance(column_type, Integer):
         return int(value)
     if isinstance(column_type, (String, Text)):
