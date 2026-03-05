@@ -332,6 +332,8 @@ def _coerce_value(value: object, column: Column[Any]) -> object:
     if value is None:
         return None
     column_type = column.type
+    if isinstance(column_type, Float):
+        return float(value)
     if isinstance(column_type, Numeric):
         return Decimal(str(value))
     if isinstance(column_type, Date):
@@ -348,8 +350,6 @@ def _coerce_value(value: object, column: Column[Any]) -> object:
         return bool(value)
     if isinstance(column_type, Integer):
         return int(value)
-    if isinstance(column_type, Float):
-        return float(value)
     if isinstance(column_type, (String, Text)):
         return str(value)
     return value
@@ -434,6 +434,8 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
 
     manifest_path = bundle_dir / "manifest.json"
     manifest = _load_json(manifest_path)
+    if manifest.get("bundle_schema_version") != BUNDLE_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported bundle schema version: {manifest.get('bundle_schema_version')}")
     if manifest.get("checksum_algorithm") != CHECKSUM_ALGORITHM:
         raise ValueError(f"Unsupported checksum algorithm: {manifest.get('checksum_algorithm')}")
 
@@ -467,9 +469,17 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
             + ", ".join(missing_from_manifest)
         )
 
+    bundle_root = bundle_dir.resolve()
     for relative_path, artifact in artifact_map.items():
-        artifact_path = bundle_dir / relative_path
-        if not artifact_path.exists():
+        relative_candidate = Path(relative_path)
+        if relative_candidate.is_absolute():
+            raise ValueError(f"Invalid bundle artifact path: {relative_path}")
+        artifact_path = (bundle_root / relative_candidate).resolve()
+        try:
+            artifact_path.relative_to(bundle_root)
+        except ValueError as exc:
+            raise ValueError(f"Invalid bundle artifact path: {relative_path}") from exc
+        if not artifact_path.is_file():
             raise ValueError(f"Missing bundle artifact file: {relative_path}")
         computed = _sha256_file(artifact_path)
         if computed != artifact["sha256"]:
@@ -477,6 +487,8 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
 
     diagnostics_path = bundle_dir / diagnostics_rel_path
     diagnostics = _load_json(diagnostics_path)
+    if diagnostics.get("bundle_schema_version") != BUNDLE_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported diagnostics schema version: {diagnostics.get('bundle_schema_version')}")
     expected_counts = diagnostics.get("table_row_counts")
     if not isinstance(expected_counts, dict):
         raise ValueError("diagnostics.table_row_counts is required")

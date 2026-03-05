@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from datetime import date, datetime
 from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 
@@ -147,6 +148,79 @@ def test_restore_bundle_requires_required_files(db_session: Session, tmp_path: P
                 RestoreBundleRequest(
                     actor="tester",
                     reason="restore missing",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_rejects_unsupported_schema_versions(db_session: Session, tmp_path: Path) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(actor="tester", reason="schema version test", output_dir=bundle_dir),
+        db_session,
+    )
+
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["bundle_schema_version"] = "9.9.9"
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_schema.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Unsupported bundle schema version"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="restore schema mismatch",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_rejects_path_traversal_artifact_entries(db_session: Session, tmp_path: Path) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(actor="tester", reason="path traversal test", output_dir=bundle_dir),
+        db_session,
+    )
+
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["artifacts"].append(
+        {
+            "path": "../outside.txt",
+            "sha256": hashlib.sha256(outside_file.read_bytes()).hexdigest(),
+            "size_bytes": outside_file.stat().st_size,
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_traversal.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Invalid bundle artifact path"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="restore traversal",
                     bundle_dir=bundle_dir,
                 ),
                 restore_session,
