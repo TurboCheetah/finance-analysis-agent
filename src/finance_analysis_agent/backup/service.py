@@ -228,6 +228,8 @@ def export_bundle(request: ExportBundleRequest, session: Session) -> ExportBundl
 
     _parse_non_empty(request.actor, field_name="actor")
     _parse_non_empty(request.reason, field_name="reason")
+    if not isinstance(request.overwrite, bool):
+        raise ValueError("overwrite must be a boolean")
     output_dir = _normalize_path(request.output_dir, field_name="output_dir")
 
     if output_dir.exists():
@@ -452,6 +454,8 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
 
     _parse_non_empty(request.actor, field_name="actor")
     _parse_non_empty(request.reason, field_name="reason")
+    if not isinstance(request.allow_non_empty, bool):
+        raise ValueError("allow_non_empty must be a boolean")
     bundle_dir = _normalize_path(request.bundle_dir, field_name="bundle_dir")
     if not bundle_dir.exists() or not bundle_dir.is_dir():
         raise ValueError(f"bundle_dir does not exist: {bundle_dir}")
@@ -537,7 +541,7 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
 
     restored_counts = _current_table_counts(session)
     for table_name, expected in expected_counts.items():
-        if not isinstance(expected, int):
+        if isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
             raise ValueError(f"Invalid expected count for table {table_name}")
         actual = restored_counts.get(table_name)
         if actual != expected:

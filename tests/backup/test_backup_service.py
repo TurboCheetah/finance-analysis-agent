@@ -100,6 +100,19 @@ def test_export_bundle_writes_expected_artifacts_and_canonical_csv(db_session: S
     }
 
 
+def test_export_bundle_requires_boolean_overwrite(db_session: Session, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="overwrite must be a boolean"):
+        export_bundle(
+            ExportBundleRequest(
+                actor="tester",
+                reason="invalid overwrite",
+                output_dir=tmp_path / "bundle",
+                overwrite="false",  # type: ignore[arg-type]
+            ),
+            db_session,
+        )
+
+
 def test_restore_bundle_detects_tampered_checksum(db_session: Session, tmp_path: Path) -> None:
     seed_backup_fixture(db_session)
     db_session.commit()
@@ -327,6 +340,78 @@ def test_restore_bundle_parses_boolean_strings_safely(db_session: Session, tmp_p
             )
         ).scalar_one()
         assert excluded is False
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_requires_boolean_allow_non_empty(db_session: Session, tmp_path: Path) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(actor="tester", reason="allow_non_empty type test", output_dir=bundle_dir),
+        db_session,
+    )
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_allow_non_empty_type.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="allow_non_empty must be a boolean"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="invalid allow_non_empty",
+                    bundle_dir=bundle_dir,
+                    allow_non_empty="false",  # type: ignore[arg-type]
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_rejects_invalid_expected_count_values(db_session: Session, tmp_path: Path) -> None:
+    seed_backup_fixture(db_session)
+    db_session.commit()
+
+    bundle_dir = tmp_path / "bundle"
+    export_bundle(
+        ExportBundleRequest(actor="tester", reason="invalid expected count test", output_dir=bundle_dir),
+        db_session,
+    )
+
+    diagnostics_path = bundle_dir / "diagnostics.json"
+    diagnostics_payload = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics_payload["table_row_counts"]["accounts"] = True
+    diagnostics_path.write_text(
+        json.dumps(diagnostics_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    manifest_path = bundle_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for artifact in manifest_payload["artifacts"]:
+        if artifact["path"] == "diagnostics.json":
+            artifact["sha256"] = hashlib.sha256(diagnostics_path.read_bytes()).hexdigest()
+            artifact["size_bytes"] = diagnostics_path.stat().st_size
+            break
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_invalid_expected_count.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Invalid expected count for table accounts"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="invalid expected count restore",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
     finally:
         restore_session.close()
         restore_engine.dispose()
