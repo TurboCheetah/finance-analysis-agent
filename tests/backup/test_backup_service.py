@@ -230,6 +230,50 @@ def test_restore_bundle_rejects_path_traversal_artifact_entries(db_session: Sess
         restore_engine.dispose()
 
 
+def test_restore_bundle_rejects_manifest_directory(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "manifest.json").mkdir(parents=True, exist_ok=True)
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_manifest_dir.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Missing required file"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="manifest directory",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
+def test_restore_bundle_rejects_unreadable_manifest_json(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "manifest.json").write_bytes(b"\x80\x81")
+
+    restore_url = f"sqlite:///{tmp_path / 'restore_manifest_unreadable.db'}"
+    restore_session, restore_engine = _open_session(restore_url)
+    try:
+        with pytest.raises(ValueError, match="Unreadable JSON file"):
+            restore_bundle(
+                RestoreBundleRequest(
+                    actor="tester",
+                    reason="manifest unreadable",
+                    bundle_dir=bundle_dir,
+                ),
+                restore_session,
+            )
+    finally:
+        restore_session.close()
+        restore_engine.dispose()
+
+
 def test_restore_bundle_enforces_fresh_target_by_default(db_session: Session, tmp_path: Path) -> None:
     seed_backup_fixture(db_session)
     db_session.commit()

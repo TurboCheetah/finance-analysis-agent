@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from time import perf_counter
 import shutil
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 from sqlalchemy import Date, DateTime, Float, Integer, Numeric, Boolean, String, Text, delete, func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -136,10 +136,10 @@ def _build_transaction_tags_lookup(session: Session) -> dict[str, list[str]]:
     return result
 
 
-def _build_transaction_csv_rows(session: Session) -> list[dict[str, object]]:
+def _iter_transaction_csv_rows(session: Session) -> Iterator[dict[str, object]]:
     parent_category = aliased(Category)
     tag_lookup = _build_transaction_tags_lookup(session)
-    rows = session.execute(
+    statement = (
         select(
             Transaction.id,
             Transaction.account_id,
@@ -166,9 +166,8 @@ def _build_transaction_csv_rows(session: Session) -> list[dict[str, object]]:
         .outerjoin(Category, Category.id == Transaction.category_id)
         .outerjoin(parent_category, parent_category.id == Category.parent_id)
         .order_by(Transaction.id.asc())
-    ).all()
-
-    csv_rows: list[dict[str, object]] = []
+    )
+    rows = session.execute(statement.execution_options(stream_results=True))
     for (
         transaction_id,
         account_id,
@@ -191,40 +190,37 @@ def _build_transaction_csv_rows(session: Session) -> list[dict[str, object]]:
         created_at,
         updated_at,
     ) in rows:
-        csv_rows.append(
-            {
-                "transaction_id": transaction_id,
-                "account_id": account_id,
-                "posted_date": posted_date.isoformat(),
-                "effective_date": effective_date.isoformat() if effective_date is not None else None,
-                "amount": format(Decimal(amount), "f"),
-                "currency": currency,
-                "original_amount": format(Decimal(original_amount), "f") if original_amount is not None else None,
-                "original_currency": original_currency,
-                "pending_status": pending_status,
-                "merchant": merchant_name,
-                "original_statement": original_statement,
-                "category": category_name,
-                "parent_category": parent_category_name,
-                "tags": ";".join(tag_lookup.get(transaction_id, [])),
-                "excluded": "true" if excluded else "false",
-                "notes": notes,
-                "source_kind": source_kind,
-                "source_transaction_id": source_transaction_id,
-                "import_batch_id": import_batch_id,
-                "created_at": created_at.isoformat(),
-                "updated_at": updated_at.isoformat(),
-            }
-        )
-    return csv_rows
+        yield {
+            "transaction_id": transaction_id,
+            "account_id": account_id,
+            "posted_date": posted_date.isoformat(),
+            "effective_date": effective_date.isoformat() if effective_date is not None else None,
+            "amount": format(Decimal(amount), "f"),
+            "currency": currency,
+            "original_amount": format(Decimal(original_amount), "f") if original_amount is not None else None,
+            "original_currency": original_currency,
+            "pending_status": pending_status,
+            "merchant": merchant_name,
+            "original_statement": original_statement,
+            "category": category_name,
+            "parent_category": parent_category_name,
+            "tags": ";".join(tag_lookup.get(transaction_id, [])),
+            "excluded": "true" if excluded else "false",
+            "notes": notes,
+            "source_kind": source_kind,
+            "source_transaction_id": source_transaction_id,
+            "import_batch_id": import_batch_id,
+            "created_at": created_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
+        }
 
 
 def _write_transactions_csv(path: Path, session: Session) -> None:
-    rows = _build_transaction_csv_rows(session)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=TRANSACTION_CSV_COLUMNS)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in _iter_transaction_csv_rows(session):
+            writer.writerow(row)
 
 
 def export_bundle(request: ExportBundleRequest, session: Session) -> ExportBundleResult:
@@ -256,12 +252,16 @@ def export_bundle(request: ExportBundleRequest, session: Session) -> ExportBundl
 
     for table in _table_order():
         table_path = json_dir / f"{table.name}.jsonl"
-        rows = session.execute(_table_select_statement(table)).mappings().all()
+        rows = session.execute(
+            _table_select_statement(table).execution_options(stream_results=True)
+        ).mappings()
+        row_count = 0
         with table_path.open("w", encoding="utf-8") as handle:
             for row in rows:
                 serialized = _serialize_row(table, dict(row))
                 handle.write(json.dumps(serialized, sort_keys=True, separators=(",", ":")) + "\n")
-        table_row_counts[table.name] = len(rows)
+                row_count += 1
+        table_row_counts[table.name] = row_count
         artifact_paths.append(str(table_path.relative_to(output_dir).as_posix()))
 
     transaction_csv_path = csv_dir / "transactions.csv"
@@ -317,10 +317,14 @@ def export_bundle(request: ExportBundleRequest, session: Session) -> ExportBundl
 
 
 def _load_json(path: Path) -> dict[str, object]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         raise ValueError(f"Missing required file: {path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_payload = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Unreadable JSON file: {path}") from exc
+    try:
+        payload = json.loads(raw_payload)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON file: {path}") from exc
     if not isinstance(payload, dict):
@@ -355,8 +359,7 @@ def _coerce_value(value: object, column: Column[Any]) -> object:
     return value
 
 
-def _read_jsonl_table_rows(path: Path, table: Table) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+def _iter_jsonl_table_rows(path: Path, table: Table) -> Iterator[dict[str, object]]:
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             line = raw_line.strip()
@@ -372,8 +375,7 @@ def _read_jsonl_table_rows(path: Path, table: Table) -> list[dict[str, object]]:
                 column.name: _coerce_value(payload.get(column.name), column)
                 for column in table.columns
             }
-            rows.append(row)
-    return rows
+            yield row
 
 
 def _current_table_counts(session: Session) -> dict[str, int]:
@@ -409,18 +411,32 @@ def _restore_with_self_fk_retry(session: Session, table: Table, rows: list[dict[
         pending = next_pending
 
 
-def _insert_rows(session: Session, table: Table, rows: list[dict[str, object]]) -> None:
-    if not rows:
-        return
+def _insert_rows(
+    session: Session,
+    table: Table,
+    rows: Iterable[dict[str, object]],
+    *,
+    batch_size: int = 1000,
+) -> None:
     has_self_fk = any(
         fk.column.table.name == table.name
         for column in table.columns
         for fk in column.foreign_keys
     )
     if has_self_fk:
-        _restore_with_self_fk_retry(session, table, rows)
+        materialized_rows = list(rows)
+        if not materialized_rows:
+            return
+        _restore_with_self_fk_retry(session, table, materialized_rows)
     else:
-        session.execute(table.insert(), rows)
+        batch: list[dict[str, object]] = []
+        for row in rows:
+            batch.append(row)
+            if len(batch) >= batch_size:
+                session.execute(table.insert(), batch)
+                batch.clear()
+        if batch:
+            session.execute(table.insert(), batch)
 
 
 def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBundleResult:
@@ -508,8 +524,7 @@ def restore_bundle(request: RestoreBundleRequest, session: Session) -> RestoreBu
 
     for table in _table_order():
         table_path = bundle_dir / "json" / f"{table.name}.jsonl"
-        rows = _read_jsonl_table_rows(table_path, table)
-        _insert_rows(session, table, rows)
+        _insert_rows(session, table, _iter_jsonl_table_rows(table_path, table))
     session.flush()
 
     restored_counts = _current_table_counts(session)
