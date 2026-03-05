@@ -1,5 +1,13 @@
 """Finance Analysis Agent package."""
 
+from finance_analysis_agent.backup import (
+    ExportBundleRequest,
+    ExportBundleResult,
+    RestoreBundleRequest,
+    RestoreBundleResult,
+    export_bundle,
+    restore_bundle,
+)
 from finance_analysis_agent.categorize import (
     CategorizeSuggestRequest,
     CategorizeSuggestResult,
@@ -92,6 +100,8 @@ from finance_analysis_agent.reconcile import (
 __all__ = [
     "CategorizeSuggestRequest",
     "CategorizeSuggestResult",
+    "ExportBundleRequest",
+    "ExportBundleResult",
     "DedupeCandidateResult",
     "DedupeScoreBreakdown",
     "RuleApplyResult",
@@ -133,6 +143,8 @@ __all__ = [
     "RecurringDetectResult",
     "RecurringEventWarning",
     "RecurringScheduleSnapshot",
+    "RestoreBundleRequest",
+    "RestoreBundleResult",
     "GeneratedReport",
     "ReportRunCause",
     "ReportType",
@@ -159,5 +171,7 @@ __all__ = [
     "list_review_items",
     "recurring_detect_and_schedule",
     "reporting_generate",
+    "export_bundle",
+    "restore_bundle",
     "txn_dedupe_match",
 ]
