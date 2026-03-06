@@ -434,9 +434,9 @@ Research anchors:
 - [x] TUR-45: Implement goal ledger + recurring schedule/missed-event warnings
 - [x] TUR-46: Implement reporting_generate for core finance reports
 - [x] TUR-47: Implement export_bundle + backup/restore round-trip
-- [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
+- [x] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-48.
+Next issue in strict sequence: None (strict sequence complete).
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
