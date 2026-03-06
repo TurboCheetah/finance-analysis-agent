@@ -416,6 +416,27 @@ def test_reporting_generate_quality_dashboard_can_run_with_other_reports(db_sess
     assert dashboard.payload_json["metric_snapshot_id"]
 
 
+def test_reporting_generate_preserves_requested_report_order_when_quality_dashboard_is_first(db_session: Session) -> None:
+    _seed_reporting_baseline(db_session)
+    db_session.flush()
+
+    result = reporting_generate(
+        ReportingGenerateRequest(
+            actor="tester",
+            reason="quality dashboard order",
+            period_month="2026-02",
+            report_types=[ReportType.QUALITY_TRUST_DASHBOARD, ReportType.CASH_FLOW],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    assert [item.report_type for item in result.reports] == [
+        ReportType.QUALITY_TRUST_DASHBOARD,
+        ReportType.CASH_FLOW,
+    ]
+
+
 def test_reporting_generate_defers_quality_metrics_until_after_other_payload_validation(db_session: Session) -> None:
     _seed_reporting_baseline(db_session)
     db_session.flush()

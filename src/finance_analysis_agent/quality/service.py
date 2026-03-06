@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 from importlib.resources import files
 import json
+import logging
 from pathlib import Path
 from statistics import median
 from uuid import uuid4
@@ -58,6 +59,7 @@ _ACTIVE_REVIEW_STATUSES = {
     ReviewItemStatus.IN_PROGRESS.value,
 }
 _FIXTURES_PACKAGE = "finance_analysis_agent.fixtures"
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -113,6 +115,13 @@ def _normalize_account_ids(values: list[str]) -> list[str]:
     normalized: set[str] = set()
     for index, value in enumerate(values):
         normalized.add(_parse_non_empty(value, field_name=f"account_ids[{index}]"))
+    return sorted(normalized)
+
+
+def _normalize_string_list(values: list[str], *, field_name: str) -> list[str]:
+    normalized: set[str] = set()
+    for index, value in enumerate(values):
+        normalized.add(_parse_non_empty(value, field_name=f"{field_name}[{index}]"))
     return sorted(normalized)
 
 
@@ -412,16 +421,23 @@ def _reconciliation_pass_rate_metrics(
     return observations
 
 
-def _suggestion_acceptance_metric(
+def _suggestion_acceptance_metrics(
     validated: _ValidatedRequest,
     *,
     run_id: str,
     session: Session,
-) -> MetricObservationRecord:
+) -> list[MetricObservationRecord]:
     period_start_dt, period_end_dt = _date_bounds(validated)
     stmt = (
-        select(ReviewItemEvent.action)
+        select(Transaction.account_id, ReviewItemEvent.action)
         .join(ReviewItem, ReviewItem.id == ReviewItemEvent.review_item_id)
+        .join(
+            Transaction,
+            and_(
+                ReviewItem.ref_table == "transactions",
+                ReviewItem.ref_id == Transaction.id,
+            ),
+        )
         .where(
             ReviewItem.source == "categorize",
             ReviewItemEvent.event_type == "bulk_action_applied",
@@ -432,75 +448,132 @@ def _suggestion_acceptance_metric(
         .order_by(ReviewItemEvent.created_at.asc(), ReviewItemEvent.id.asc())
     )
     if validated.account_ids:
-        stmt = stmt.join(
-            Transaction,
-            and_(
-                ReviewItem.ref_table == "transactions",
-                ReviewItem.ref_id == Transaction.id,
-            ),
-        ).where(Transaction.account_id.in_(validated.account_ids))
+        stmt = stmt.where(Transaction.account_id.in_(validated.account_ids))
 
-    actions = session.scalars(stmt).all()
-    approved = sum(1 for action in actions if action == "approve_suggestion")
-    rejected = sum(1 for action in actions if action == "reject_suggestion")
-    total = approved + rejected
+    rows = session.execute(stmt).all()
     threshold = _Threshold(0.70, "<")
-    value = None if total == 0 else approved / total
-    return _make_observation(
-        metric_group="automation_quality",
-        metric_key="suggestion_acceptance_rate",
-        period_start=validated.period_start,
-        period_end=validated.period_end,
-        numerator=approved,
-        denominator=total,
-        metric_value=value,
-        threshold=threshold,
-        alert_status=_status_for_threshold(value, threshold),
-        run_id=run_id,
-    )
+    if not validated.account_ids:
+        approved = sum(1 for _, action in rows if action == "approve_suggestion")
+        rejected = sum(1 for _, action in rows if action == "reject_suggestion")
+        total = approved + rejected
+        value = None if total == 0 else approved / total
+        return [
+            _make_observation(
+                metric_group="automation_quality",
+                metric_key="suggestion_acceptance_rate",
+                period_start=validated.period_start,
+                period_end=validated.period_end,
+                numerator=approved,
+                denominator=total,
+                metric_value=value,
+                threshold=threshold,
+                alert_status=_status_for_threshold(value, threshold),
+                run_id=run_id,
+            )
+        ]
+
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
+    for account_id, action in rows:
+        counts[str(account_id)][str(action)] += 1
+
+    observations: list[MetricObservationRecord] = []
+    for account_id in validated.account_ids:
+        approved = counts[account_id]["approve_suggestion"]
+        rejected = counts[account_id]["reject_suggestion"]
+        total = approved + rejected
+        value = None if total == 0 else approved / total
+        observations.append(
+            _make_observation(
+                metric_group="automation_quality",
+                metric_key="suggestion_acceptance_rate",
+                period_start=validated.period_start,
+                period_end=validated.period_end,
+                account_id=account_id,
+                numerator=approved,
+                denominator=total,
+                metric_value=value,
+                threshold=threshold,
+                alert_status=_status_for_threshold(value, threshold),
+                run_id=run_id,
+            )
+        )
+    return observations
 
 
-def _review_time_to_inbox_zero_metric(
+def _review_time_to_inbox_zero_metrics(
     validated: _ValidatedRequest,
     *,
     run_id: str,
     session: Session,
-) -> MetricObservationRecord:
+) -> list[MetricObservationRecord]:
     period_start_dt, period_end_dt = _date_bounds(validated)
-    stmt = select(ReviewItem.created_at, ReviewItem.resolved_at).where(
+    stmt = select(Transaction.account_id, ReviewItem.created_at, ReviewItem.resolved_at).join(
+        Transaction,
+        and_(
+            ReviewItem.ref_table == "transactions",
+            ReviewItem.ref_id == Transaction.id,
+        ),
+    ).where(
         ReviewItem.status.in_([ReviewItemStatus.RESOLVED.value, ReviewItemStatus.REJECTED.value]),
         ReviewItem.resolved_at.is_not(None),
         ReviewItem.created_at >= period_start_dt,
         ReviewItem.created_at <= period_end_dt,
     )
     if validated.account_ids:
-        stmt = stmt.join(
-            Transaction,
-            and_(
-                ReviewItem.ref_table == "transactions",
-                ReviewItem.ref_id == Transaction.id,
-            ),
-        ).where(Transaction.account_id.in_(validated.account_ids))
+        stmt = stmt.where(Transaction.account_id.in_(validated.account_ids))
 
-    durations = [
-        round(((resolved_at - created_at).total_seconds() / 3600), 6)
-        for created_at, resolved_at in session.execute(stmt).all()
-        if created_at is not None and resolved_at is not None
-    ]
+    rows = session.execute(stmt).all()
     threshold = _Threshold(72.0, ">")
-    value = None if not durations else float(round(median(durations), 6))
-    return _make_observation(
-        metric_group="automation_quality",
-        metric_key="review_time_to_inbox_zero_hours",
-        period_start=validated.period_start,
-        period_end=validated.period_end,
-        numerator=len(durations),
-        denominator=len(durations),
-        metric_value=value,
-        threshold=threshold,
-        alert_status=_status_for_threshold(value, threshold),
-        run_id=run_id,
-    )
+    if not validated.account_ids:
+        durations = [
+            round(((resolved_at - created_at).total_seconds() / 3600), 6)
+            for _, created_at, resolved_at in rows
+            if created_at is not None and resolved_at is not None
+        ]
+        value = None if not durations else float(round(median(durations), 6))
+        return [
+            _make_observation(
+                metric_group="automation_quality",
+                metric_key="review_time_to_inbox_zero_hours",
+                period_start=validated.period_start,
+                period_end=validated.period_end,
+                numerator=len(durations),
+                denominator=len(durations),
+                metric_value=value,
+                threshold=threshold,
+                alert_status=_status_for_threshold(value, threshold),
+                run_id=run_id,
+            )
+        ]
+
+    durations_by_account: dict[str, list[float]] = defaultdict(list)
+    for account_id, created_at, resolved_at in rows:
+        if created_at is None or resolved_at is None:
+            continue
+        durations_by_account[str(account_id)].append(
+            round(((resolved_at - created_at).total_seconds() / 3600), 6)
+        )
+
+    observations: list[MetricObservationRecord] = []
+    for account_id in validated.account_ids:
+        durations = durations_by_account.get(account_id, [])
+        value = None if not durations else float(round(median(durations), 6))
+        observations.append(
+            _make_observation(
+                metric_group="automation_quality",
+                metric_key="review_time_to_inbox_zero_hours",
+                period_start=validated.period_start,
+                period_end=validated.period_end,
+                account_id=account_id,
+                numerator=len(durations),
+                denominator=len(durations),
+                metric_value=value,
+                threshold=threshold,
+                alert_status=_status_for_threshold(value, threshold),
+                run_id=run_id,
+            )
+        )
+    return observations
 
 
 def _unknown_merchant_rate_metrics(
@@ -999,8 +1072,8 @@ def generate_quality_metrics(request: QualityMetricsGenerateRequest, session: Se
                 session=session,
             )
         )
-        observations.append(_suggestion_acceptance_metric(validated, run_id=run_metadata_id, session=session))
-        observations.append(_review_time_to_inbox_zero_metric(validated, run_id=run_metadata_id, session=session))
+        observations.extend(_suggestion_acceptance_metrics(validated, run_id=run_metadata_id, session=session))
+        observations.extend(_review_time_to_inbox_zero_metrics(validated, run_id=run_metadata_id, session=session))
         observations.extend(_pdf_fixture_metrics(validated, run_id=run_metadata_id))
         observations.extend(_dedupe_fixture_metrics(validated, run_id=run_metadata_id))
         observations.extend(
@@ -1062,17 +1135,24 @@ def generate_quality_metrics(request: QualityMetricsGenerateRequest, session: Se
             alert_count=alert_count,
         )
     except Exception as exc:
-        _finish_run(
-            run_metadata_id=run_metadata_id,
-            status="failed",
-            diagnostics_json={
-                "period_start": validated.period_start.isoformat(),
-                "period_end": validated.period_end.isoformat(),
-                "account_ids": validated.account_ids,
-                "error": str(exc),
-            },
-            session=session,
-        )
+        try:
+            _finish_run(
+                run_metadata_id=run_metadata_id,
+                status="failed",
+                diagnostics_json={
+                    "period_start": validated.period_start.isoformat(),
+                    "period_end": validated.period_end.isoformat(),
+                    "account_ids": validated.account_ids,
+                    "error": str(exc),
+                },
+                session=session,
+            )
+        except Exception as finish_exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Failed to finalize run metadata %s for quality metrics: %s",
+                run_metadata_id,
+                finish_exc,
+            )
         raise
 
 
@@ -1092,13 +1172,23 @@ def query_metric_observations(request: MetricObservationQueryRequest, session: S
     if request.period_end is not None:
         conditions.append(MetricObservation.period_end <= request.period_end)
     if request.account_ids:
-        conditions.append(MetricObservation.account_id.in_(sorted(set(request.account_ids))))
+        conditions.append(MetricObservation.account_id.in_(_normalize_account_ids(request.account_ids)))
     if request.template_keys:
-        conditions.append(MetricObservation.template_key.in_(sorted(set(request.template_keys))))
+        conditions.append(
+            MetricObservation.template_key.in_(
+                _normalize_string_list(request.template_keys, field_name="template_keys")
+            )
+        )
     if request.metric_keys:
-        conditions.append(MetricObservation.metric_key.in_(sorted(set(request.metric_keys))))
+        conditions.append(
+            MetricObservation.metric_key.in_(_normalize_string_list(request.metric_keys, field_name="metric_keys"))
+        )
     if request.metric_groups:
-        conditions.append(MetricObservation.metric_group.in_(sorted(set(request.metric_groups))))
+        conditions.append(
+            MetricObservation.metric_group.in_(
+                _normalize_string_list(request.metric_groups, field_name="metric_groups")
+            )
+        )
     if request.alert_statuses:
         normalized_statuses = []
         for index, value in enumerate(request.alert_statuses):

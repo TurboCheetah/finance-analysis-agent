@@ -167,6 +167,14 @@ def test_query_metric_observations_rejects_inverted_period_range(db_session: Ses
         )
 
 
+def test_query_metric_observations_rejects_blank_string_filters(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="metric_groups\\[0\\] is required"):
+        query_metric_observations(
+            MetricObservationQueryRequest(metric_groups=["   "]),
+            db_session,
+        )
+
+
 def test_generate_quality_metrics_replaces_existing_snapshot_rows(db_session: Session) -> None:
     _seed_account(db_session, account_id="acct-1")
     _seed_transaction(
@@ -395,3 +403,113 @@ def test_query_metric_observations_orders_multi_row_metrics_deterministically(db
         for row in result.observations
     ]
     assert rendered == sorted(rendered, key=lambda item: (item[0] or "", item[1] or "", item[2] or 0))
+
+
+def test_generate_quality_metrics_scopes_automation_observations_by_account(db_session: Session) -> None:
+    _seed_account(db_session, account_id="acct-a")
+    _seed_account(db_session, account_id="acct-b")
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-a1",
+        account_id="acct-a",
+        posted_date=date(2026, 2, 3),
+        amount="-20.00",
+        merchant_id="merchant-a",
+    )
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-b1",
+        account_id="acct-b",
+        posted_date=date(2026, 2, 4),
+        amount="-30.00",
+        merchant_id="merchant-b",
+    )
+    created_at = datetime(2026, 2, 1, 9, 0, 0)
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-a1",
+        transaction_id="txn-a1",
+        status=ReviewItemStatus.RESOLVED.value,
+        reason_code="categorize.low_confidence",
+        created_at=created_at,
+        resolved_at=created_at + timedelta(hours=12),
+    )
+    _seed_review_event(
+        db_session,
+        event_id="ev-a1",
+        review_item_id="ri-a1",
+        action="approve_suggestion",
+        created_at=created_at + timedelta(hours=12),
+    )
+    _seed_review_item(
+        db_session,
+        review_item_id="ri-b1",
+        transaction_id="txn-b1",
+        status=ReviewItemStatus.REJECTED.value,
+        reason_code="categorize.low_confidence",
+        created_at=created_at,
+        resolved_at=created_at + timedelta(hours=96),
+    )
+    _seed_review_event(
+        db_session,
+        event_id="ev-b1",
+        review_item_id="ri-b1",
+        action="reject_suggestion",
+        created_at=created_at + timedelta(hours=96),
+    )
+    db_session.flush()
+
+    first = generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor="tester",
+            reason="scoped acct-a",
+            period_month="2026-02",
+            account_ids=["acct-a"],
+        ),
+        db_session,
+    )
+    second = generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor="tester",
+            reason="scoped acct-b",
+            period_month="2026-02",
+            account_ids=["acct-b"],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    first_automation = {
+        (row.metric_key, row.account_id): row
+        for row in first.observations
+        if row.metric_group == "automation_quality"
+    }
+    second_automation = {
+        (row.metric_key, row.account_id): row
+        for row in second.observations
+        if row.metric_group == "automation_quality"
+    }
+    assert set(first_automation) == {
+        ("suggestion_acceptance_rate", "acct-a"),
+        ("review_time_to_inbox_zero_hours", "acct-a"),
+    }
+    assert set(second_automation) == {
+        ("suggestion_acceptance_rate", "acct-b"),
+        ("review_time_to_inbox_zero_hours", "acct-b"),
+    }
+
+    scoped_rows = query_metric_observations(
+        MetricObservationQueryRequest(
+            period_start=date(2026, 2, 1),
+            period_end=date(2026, 2, 28),
+            account_ids=["acct-a", "acct-b"],
+            metric_groups=["automation_quality"],
+        ),
+        db_session,
+    ).observations
+    assert {(row.metric_key, row.account_id) for row in scoped_rows} == {
+        ("suggestion_acceptance_rate", "acct-a"),
+        ("review_time_to_inbox_zero_hours", "acct-a"),
+        ("suggestion_acceptance_rate", "acct-b"),
+        ("review_time_to_inbox_zero_hours", "acct-b"),
+    }

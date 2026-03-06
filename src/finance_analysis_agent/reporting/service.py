@@ -867,14 +867,17 @@ def reporting_generate(request: ReportingGenerateRequest, session: Session) -> R
 
     try:
         generated_payloads: list[tuple[ReportType, dict[str, object], list[ReportRunCause]]] = []
-        deferred_quality_dashboard = ReportType.QUALITY_TRUST_DASHBOARD in validated.report_types
+        deferred_quality_dashboard_index = next(
+            (index for index, item in enumerate(validated.report_types) if item is ReportType.QUALITY_TRUST_DASHBOARD),
+            None,
+        )
         for report_type in validated.report_types:
             if report_type is ReportType.QUALITY_TRUST_DASHBOARD:
                 continue
             payload, causes = _build_report_payload(report_type, validated, session)
             generated_payloads.append((report_type, payload, causes))
 
-        if deferred_quality_dashboard:
+        if deferred_quality_dashboard_index is not None:
             metric_result = generate_quality_metrics(
                 QualityMetricsGenerateRequest(
                     actor=validated.actor,
@@ -885,7 +888,8 @@ def reporting_generate(request: ReportingGenerateRequest, session: Session) -> R
                 ),
                 session,
             )
-            generated_payloads.append(
+            generated_payloads.insert(
+                deferred_quality_dashboard_index,
                 (
                     ReportType.QUALITY_TRUST_DASHBOARD,
                     _build_quality_trust_dashboard_payload(validated, metric_result),
