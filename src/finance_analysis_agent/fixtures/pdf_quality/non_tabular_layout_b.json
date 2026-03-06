@@ -1,0 +1,35 @@
+{
+  "name": "non_tabular_layout_b",
+  "template_hint": "non_tabular_layout_b",
+  "metadata": {
+    "statement_year": 2026,
+    "currency": "USD",
+    "issuer": "community_credit_union"
+  },
+  "text_pages": [
+    "Daily balance summary\n01/21 Pharmacy -12.30\n01/22 Transit Card -7.25\n01/23 Card Payment 123.45-"
+  ],
+  "expected_rows": [
+    {
+      "posted_date": "2026-01-21",
+      "amount": "-12.30",
+      "currency": "USD",
+      "original_statement": "Pharmacy",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-22",
+      "amount": "-7.25",
+      "currency": "USD",
+      "original_statement": "Transit Card",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-23",
+      "amount": "-123.45",
+      "currency": "USD",
+      "original_statement": "Card Payment",
+      "page_no": 1
+    }
+  ]
+}

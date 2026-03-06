@@ -26,4 +26,8 @@ finance-analysis-agent = "finance_analysis_agent.cli:app"
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
+include = ["src/finance_analysis_agent/fixtures/**/*.json"]
 packages = ["src/finance_analysis_agent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/finance_analysis_agent/fixtures/**/*.json"]

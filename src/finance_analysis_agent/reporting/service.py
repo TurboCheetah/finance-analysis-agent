@@ -31,6 +31,12 @@ from finance_analysis_agent.db.models import (
 )
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
+from finance_analysis_agent.quality import (
+    MetricObservationRecord,
+    QualityMetricsGenerateRequest,
+    QualityMetricsGenerateResult,
+    generate_quality_metrics,
+)
 from finance_analysis_agent.reporting.types import (
     GeneratedReport,
     ReportRunCause,
@@ -757,6 +763,73 @@ def _build_goal_progress_payload(validated: _ValidatedRequest, session: Session)
     }
 
 
+def _serialize_metric_observation(record: MetricObservationRecord) -> dict[str, object]:
+    item = record
+    return {
+        "key": f"{item.metric_group}.{item.metric_key}",
+        "metric_group": item.metric_group,
+        "metric_key": item.metric_key,
+        "metric_value": item.metric_value,
+        "numerator": item.numerator,
+        "denominator": item.denominator,
+        "threshold_value": item.threshold_value,
+        "threshold_operator": item.threshold_operator,
+        "alert_status": item.alert_status.value,
+        "account_id": item.account_id,
+        "template_key": item.template_key,
+        "dimensions": item.dimensions,
+        "period_start": item.period_start.isoformat(),
+        "period_end": item.period_end.isoformat(),
+    }
+
+
+def _build_quality_trust_dashboard_payload(
+    validated: _ValidatedRequest,
+    metric_result: QualityMetricsGenerateResult,
+) -> dict[str, object]:
+    groups: dict[str, list[dict[str, object]]] = {
+        "correctness": [],
+        "automation_quality": [],
+        "parsing_quality": [],
+        "trust_health": [],
+    }
+    alerts: list[dict[str, object]] = []
+    no_data_count = 0
+
+    for observation in metric_result.observations:
+        serialized = _serialize_metric_observation(observation)
+        groups.setdefault(observation.metric_group, []).append(serialized)
+        if observation.alert_status.value == "alert":
+            alerts.append(serialized)
+        elif observation.alert_status.value == "no_data":
+            no_data_count += 1
+
+    metric_snapshot_id = _payload_hash(
+        {
+            "period_start": validated.period_start.isoformat(),
+            "period_end": validated.period_end.isoformat(),
+            "account_ids": validated.account_ids,
+            "observations": [item for values in groups.values() for item in values],
+        }
+    )
+
+    return {
+        "summary": {
+            "metric_count": len(metric_result.observations),
+            "alert_count": len(alerts),
+            "no_data_count": no_data_count,
+            "account_scope": validated.account_ids,
+        },
+        "alerts": alerts,
+        "metric_run_id": metric_result.run_metadata_id,
+        "metric_snapshot_id": metric_snapshot_id,
+        "groups": {
+            group_name: {"observations": observations}
+            for group_name, observations in groups.items()
+        },
+    }
+
+
 def _build_report_payload(report_type: ReportType, validated: _ValidatedRequest, session: Session) -> tuple[dict[str, object], list[ReportRunCause]]:
     causes: list[ReportRunCause] = []
     if report_type is ReportType.CASH_FLOW:
@@ -769,12 +842,21 @@ def _build_report_payload(report_type: ReportType, validated: _ValidatedRequest,
         return _build_budget_vs_actual_payload(validated, session), causes
     if report_type is ReportType.GOAL_PROGRESS:
         return _build_goal_progress_payload(validated, session), causes
+    # QUALITY_TRUST_DASHBOARD is handled separately in reporting_generate().
     raise ValueError(f"Unhandled report type: {report_type}")
 
 
 def _payload_hash(payload: dict[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _payload_for_hash(report_type: ReportType, payload: dict[str, object]) -> dict[str, object]:
+    if report_type is not ReportType.QUALITY_TRUST_DASHBOARD:
+        return payload
+    normalized = dict(payload)
+    normalized.pop("metric_run_id", None)
+    return normalized
 
 
 def reporting_generate(request: ReportingGenerateRequest, session: Session) -> ReportingGenerateResult:
@@ -785,9 +867,35 @@ def reporting_generate(request: ReportingGenerateRequest, session: Session) -> R
 
     try:
         generated_payloads: list[tuple[ReportType, dict[str, object], list[ReportRunCause]]] = []
+        deferred_quality_dashboard_index = next(
+            (index for index, item in enumerate(validated.report_types) if item is ReportType.QUALITY_TRUST_DASHBOARD),
+            None,
+        )
         for report_type in validated.report_types:
+            if report_type is ReportType.QUALITY_TRUST_DASHBOARD:
+                continue
             payload, causes = _build_report_payload(report_type, validated, session)
             generated_payloads.append((report_type, payload, causes))
+
+        if deferred_quality_dashboard_index is not None:
+            metric_result = generate_quality_metrics(
+                QualityMetricsGenerateRequest(
+                    actor=validated.actor,
+                    reason=validated.reason,
+                    period_start=validated.period_start,
+                    period_end=validated.period_end,
+                    account_ids=list(validated.account_ids),
+                ),
+                session,
+            )
+            generated_payloads.insert(
+                deferred_quality_dashboard_index,
+                (
+                    ReportType.QUALITY_TRUST_DASHBOARD,
+                    _build_quality_trust_dashboard_payload(validated, metric_result),
+                    [],
+                )
+            )
 
         generated_at = utcnow()
         generated_reports: list[GeneratedReport] = []
@@ -795,7 +903,7 @@ def reporting_generate(request: ReportingGenerateRequest, session: Session) -> R
         report_hashes: dict[str, str] = {}
 
         for report_type, payload, causes in generated_payloads:
-            payload_hash = _payload_hash(payload)
+            payload_hash = _payload_hash(_payload_for_hash(report_type, payload))
             report = Report(
                 id=str(uuid4()),
                 report_type=report_type.value,

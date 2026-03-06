@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 
 from alembic import command
+from sqlalchemy import func, select
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from typer.testing import CliRunner
 
 from finance_analysis_agent.cli import app
-from finance_analysis_agent.db.models import Account, Transaction
+from finance_analysis_agent.db.models import Account, MetricObservation, Transaction
 from finance_analysis_agent.utils.time import utcnow
 from tests.helpers import alembic_config
 
@@ -116,3 +117,53 @@ def test_reporting_generate_cli_requires_budget_id_for_budget_vs_actual(tmp_path
 
     assert result.exit_code == 1
     assert "budget_id is required when budget_vs_actual report is requested" in result.stderr
+
+
+def test_reporting_generate_cli_supports_quality_trust_dashboard(tmp_path: Path) -> None:
+    database_url = _create_database(tmp_path)
+    _seed_cashflow_data(database_url)
+
+    output_path = tmp_path / "quality-dashboard.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "reporting",
+            "generate",
+            "--database-url",
+            database_url,
+            "--period-month",
+            "2026-02",
+            "--report-type",
+            "quality_trust_dashboard",
+            "--actor",
+            "cli-tester",
+            "--reason",
+            "quality cli test",
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["report_types"] == ["quality_trust_dashboard"]
+    metric_run_id = payload["reports"][0]["payload_json"]["metric_run_id"]
+    assert metric_run_id
+    assert payload["reports"][0]["payload_json"]["metric_snapshot_id"]
+    assert "quality_trust_dashboard" in result.stdout
+
+    engine = create_engine(database_url)
+    session_factory = sessionmaker(bind=engine, autoflush=False)
+    session: Session = session_factory()
+    try:
+        observation_count = session.scalar(
+            select(func.count())
+            .select_from(MetricObservation)
+            .where(MetricObservation.run_id == metric_run_id)
+        )
+        assert observation_count is not None
+        assert observation_count > 0
+    finally:
+        session.close()
+        engine.dispose()
