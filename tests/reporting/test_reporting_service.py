@@ -326,26 +326,35 @@ def test_reporting_generate_all_reports_persists_and_records_run_metadata(db_ses
     db_session.flush()
 
     assert result.report_types == list(ReportType)
-    assert len(result.reports) == 5
+    assert len(result.reports) == 6
 
     reports = db_session.scalars(
         select(Report)
         .where(Report.run_id == result.run_metadata_id)
         .order_by(Report.report_type.asc())
     ).all()
-    assert len(reports) == 5
+    assert len(reports) == 6
 
     run = db_session.get(RunMetadata, result.run_metadata_id)
     assert run is not None
     assert run.pipeline_name == "reporting_generate"
     assert run.status == "success"
     assert run.diagnostics_json is not None
-    assert run.diagnostics_json["report_count"] == 5
+    assert run.diagnostics_json["report_count"] == 6
 
     cashflow = next(item for item in result.reports if item.report_type is ReportType.CASH_FLOW)
     assert cashflow.payload_json["summary"]["inflow"] == "3000.00"
     assert cashflow.payload_json["summary"]["outflow"] == "1120.00"
     assert cashflow.payload_json["summary"]["net"] == "1880.00"
+
+    dashboard = next(item for item in result.reports if item.report_type is ReportType.QUALITY_TRUST_DASHBOARD)
+    assert dashboard.payload_json["metric_run_id"]
+    assert set(dashboard.payload_json["groups"]) == {
+        "correctness",
+        "automation_quality",
+        "parsing_quality",
+        "trust_health",
+    }
 
 
 def test_reporting_generate_is_deterministic_for_same_snapshot(db_session: Session) -> None:
@@ -371,6 +380,29 @@ def test_reporting_generate_is_deterministic_for_same_snapshot(db_session: Sessi
     for report_type in first_by_type:
         assert first_by_type[report_type].payload_hash == second_by_type[report_type].payload_hash
         assert first_by_type[report_type].payload_json == second_by_type[report_type].payload_json
+
+
+def test_reporting_generate_quality_dashboard_can_run_with_other_reports(db_session: Session) -> None:
+    _seed_reporting_baseline(db_session)
+    db_session.flush()
+
+    result = reporting_generate(
+        ReportingGenerateRequest(
+            actor="tester",
+            reason="quality dashboard",
+            period_month="2026-02",
+            report_types=[ReportType.CASH_FLOW, ReportType.QUALITY_TRUST_DASHBOARD],
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    report_types = [item.report_type for item in result.reports]
+    assert report_types == [ReportType.CASH_FLOW, ReportType.QUALITY_TRUST_DASHBOARD]
+
+    dashboard = next(item for item in result.reports if item.report_type is ReportType.QUALITY_TRUST_DASHBOARD)
+    assert dashboard.payload_json["summary"]["metric_count"] >= 1
+    assert isinstance(dashboard.payload_json["alerts"], list)
 
 
 def test_reporting_generate_applies_account_scope_filter(db_session: Session) -> None:

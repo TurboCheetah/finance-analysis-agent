@@ -14,6 +14,7 @@ class ReportType(StrEnum):
     NET_WORTH = "net_worth"
     BUDGET_VS_ACTUAL = "budget_vs_actual"
     GOAL_PROGRESS = "goal_progress"
+    QUALITY_TRUST_DASHBOARD = "quality_trust_dashboard"
 
 
 @dataclass(slots=True)

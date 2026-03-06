@@ -63,6 +63,12 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("statement_id",),
             ("approved_adjustment_txn_id",),
         },
+        "metric_observations": {
+            ("metric_key", "period_start", "period_end"),
+            ("account_id", "period_end"),
+            ("template_key",),
+            ("alert_status",),
+        },
     }
 
     for table, expected in expected_indexes.items():
@@ -156,6 +162,7 @@ def test_baseline_schema_matches_prd_constraints_and_indexes(tmp_path: Path) -> 
             "goals",
             "goal_allocations",
             "goal_events",
+            "metric_observations",
             "reports",
             "run_metadata",
         }

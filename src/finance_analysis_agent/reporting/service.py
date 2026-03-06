@@ -31,6 +31,7 @@ from finance_analysis_agent.db.models import (
 )
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
+from finance_analysis_agent.quality import QualityMetricsGenerateRequest, generate_quality_metrics
 from finance_analysis_agent.reporting.types import (
     GeneratedReport,
     ReportRunCause,
@@ -757,6 +758,80 @@ def _build_goal_progress_payload(validated: _ValidatedRequest, session: Session)
     }
 
 
+def _serialize_metric_observation(record: object) -> dict[str, object]:
+    item = record
+    return {
+        "key": f"{item.metric_group}.{item.metric_key}",
+        "metric_group": item.metric_group,
+        "metric_key": item.metric_key,
+        "metric_value": item.metric_value,
+        "numerator": item.numerator,
+        "denominator": item.denominator,
+        "threshold_value": item.threshold_value,
+        "threshold_operator": item.threshold_operator,
+        "alert_status": item.alert_status.value,
+        "account_id": item.account_id,
+        "template_key": item.template_key,
+        "dimensions": item.dimensions,
+        "period_start": item.period_start.isoformat(),
+        "period_end": item.period_end.isoformat(),
+    }
+
+
+def _build_quality_trust_dashboard_payload(validated: _ValidatedRequest, session: Session) -> dict[str, object]:
+    metric_result = generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor=validated.actor,
+            reason=validated.reason,
+            period_start=validated.period_start,
+            period_end=validated.period_end,
+            account_ids=list(validated.account_ids),
+        ),
+        session,
+    )
+
+    groups: dict[str, list[dict[str, object]]] = {
+        "correctness": [],
+        "automation_quality": [],
+        "parsing_quality": [],
+        "trust_health": [],
+    }
+    alerts: list[dict[str, object]] = []
+    no_data_count = 0
+
+    for observation in metric_result.observations:
+        serialized = _serialize_metric_observation(observation)
+        groups.setdefault(observation.metric_group, []).append(serialized)
+        if observation.alert_status.value == "alert":
+            alerts.append(serialized)
+        elif observation.alert_status.value == "no_data":
+            no_data_count += 1
+
+    metric_snapshot_id = _payload_hash(
+        {
+            "period_start": validated.period_start.isoformat(),
+            "period_end": validated.period_end.isoformat(),
+            "account_ids": validated.account_ids,
+            "observations": [item for values in groups.values() for item in values],
+        }
+    )
+
+    return {
+        "summary": {
+            "metric_count": len(metric_result.observations),
+            "alert_count": len(alerts),
+            "no_data_count": no_data_count,
+            "account_scope": validated.account_ids,
+        },
+        "alerts": alerts,
+        "metric_run_id": metric_snapshot_id,
+        "groups": {
+            group_name: {"observations": observations}
+            for group_name, observations in groups.items()
+        },
+    }
+
+
 def _build_report_payload(report_type: ReportType, validated: _ValidatedRequest, session: Session) -> tuple[dict[str, object], list[ReportRunCause]]:
     causes: list[ReportRunCause] = []
     if report_type is ReportType.CASH_FLOW:
@@ -769,6 +844,8 @@ def _build_report_payload(report_type: ReportType, validated: _ValidatedRequest,
         return _build_budget_vs_actual_payload(validated, session), causes
     if report_type is ReportType.GOAL_PROGRESS:
         return _build_goal_progress_payload(validated, session), causes
+    if report_type is ReportType.QUALITY_TRUST_DASHBOARD:
+        return _build_quality_trust_dashboard_payload(validated, session), causes
     raise ValueError(f"Unhandled report type: {report_type}")
 
 

@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy import UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -665,6 +665,33 @@ class GoalEvent(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     related_transaction_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.id"))
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class MetricObservation(Base):
+    __tablename__ = "metric_observations"
+    __table_args__ = (
+        Index("ix_metric_observations_metric_key_period", "metric_key", "period_start", "period_end"),
+        Index("ix_metric_observations_account_id_period_end", "account_id", "period_end"),
+        Index("ix_metric_observations_template_key", "template_key"),
+        Index("ix_metric_observations_alert_status", "alert_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String)
+    metric_group: Mapped[str] = mapped_column(String, nullable=False)
+    metric_key: Mapped[str] = mapped_column(String, nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id"))
+    template_key: Mapped[str | None] = mapped_column(String)
+    metric_value: Mapped[float | None] = mapped_column(Float)
+    numerator: Mapped[float | None] = mapped_column(Float)
+    denominator: Mapped[float | None] = mapped_column(Float)
+    threshold_value: Mapped[float | None] = mapped_column(Float)
+    threshold_operator: Mapped[str | None] = mapped_column(String)
+    alert_status: Mapped[str] = mapped_column(String, nullable=False)
+    dimensions_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class Report(Base):
