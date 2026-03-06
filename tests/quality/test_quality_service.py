@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
-from finance_analysis_agent.db.models import Account, MetricObservation, Reconciliation, ReviewItem, ReviewItemEvent, Transaction
+from finance_analysis_agent.db.models import Account, MetricObservation, Reconciliation, ReviewItem, ReviewItemEvent, RunMetadata, Transaction
 from finance_analysis_agent.quality import (
     MetricAlertStatus,
     MetricObservationQueryRequest,
@@ -14,6 +14,7 @@ from finance_analysis_agent.quality import (
     generate_quality_metrics,
     query_metric_observations,
 )
+from finance_analysis_agent.quality import service as quality_service
 from finance_analysis_agent.review_queue.types import ReviewItemStatus, ReviewSource
 from finance_analysis_agent.utils.time import utcnow
 
@@ -227,6 +228,80 @@ def test_generate_quality_metrics_replaces_existing_snapshot_rows(db_session: Se
 
     persisted_count = db_session.query(MetricObservation).count()
     assert persisted_count == len(second.observations)
+
+
+def test_generate_quality_metrics_removes_stale_unscoped_account_rows(db_session: Session) -> None:
+    _seed_account(db_session, account_id="acct-a")
+    _seed_account(db_session, account_id="acct-b")
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-a",
+        account_id="acct-a",
+        posted_date=date(2026, 2, 5),
+        amount="-10.00",
+        merchant_id=None,
+    )
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-b",
+        account_id="acct-b",
+        posted_date=date(2026, 2, 6),
+        amount="-15.00",
+        merchant_id=None,
+    )
+    _seed_reconciliation(
+        db_session,
+        reconciliation_id="rec-a",
+        account_id="acct-a",
+        period_end=date(2026, 2, 28),
+        status="pass",
+    )
+    _seed_reconciliation(
+        db_session,
+        reconciliation_id="rec-b",
+        account_id="acct-b",
+        period_end=date(2026, 2, 28),
+        status="pass",
+    )
+    db_session.flush()
+
+    generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor="tester",
+            reason="baseline rows",
+            period_month="2026-02",
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    db_session.query(Transaction).filter(Transaction.account_id == "acct-b").delete()
+    db_session.query(Reconciliation).filter(Reconciliation.account_id == "acct-b").delete()
+    db_session.flush()
+
+    generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor="tester",
+            reason="stale row removal",
+            period_month="2026-02",
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    rows = query_metric_observations(
+        MetricObservationQueryRequest(
+            period_start=date(2026, 2, 1),
+            period_end=date(2026, 2, 28),
+            account_ids=["acct-a", "acct-b"],
+            metric_keys=["unknown_merchant_rate"],
+        ),
+        db_session,
+    ).observations
+
+    assert {(row.metric_key, row.account_id) for row in rows} == {
+        ("unknown_merchant_rate", "acct-a"),
+    }
 
 
 def test_query_metric_observations_filters_by_account_template_and_alert_status(db_session: Session) -> None:
@@ -513,3 +588,27 @@ def test_generate_quality_metrics_scopes_automation_observations_by_account(db_s
         ("suggestion_acceptance_rate", "acct-b"),
         ("review_time_to_inbox_zero_hours", "acct-b"),
     }
+
+
+def test_generate_quality_metrics_marks_run_failed_when_scope_resolution_raises(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_scope_error(*_args: object, **_kwargs: object) -> list[str]:
+        raise ValueError("scope resolution failed")
+
+    monkeypatch.setattr(quality_service, "_scoped_account_ids", _raise_scope_error)
+
+    with pytest.raises(ValueError, match="scope resolution failed"):
+        generate_quality_metrics(
+            QualityMetricsGenerateRequest(
+                actor="tester",
+                reason="scope failure",
+                period_month="2026-02",
+            ),
+            db_session,
+        )
+
+    run = db_session.query(RunMetadata).order_by(RunMetadata.started_at.desc()).first()
+    assert run is not None
+    assert run.status == "failed"

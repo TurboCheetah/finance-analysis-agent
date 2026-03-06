@@ -296,7 +296,27 @@ def _to_record(row: MetricObservation) -> MetricObservationRecord:
     )
 
 
-def _persist_observations(observations: list[MetricObservationRecord], *, run_id: str, session: Session) -> None:
+def _persist_observations(
+    observations: list[MetricObservationRecord],
+    *,
+    run_id: str,
+    replace_entire_metric_period: bool,
+    session: Session,
+) -> None:
+    metric_period_keys = {
+        (observation.metric_key, observation.period_start, observation.period_end)
+        for observation in observations
+    }
+    if replace_entire_metric_period:
+        for metric_key, period_start, period_end in metric_period_keys:
+            session.execute(
+                delete(MetricObservation).where(
+                    MetricObservation.metric_key == metric_key,
+                    MetricObservation.period_start == period_start,
+                    MetricObservation.period_end == period_end,
+                )
+            )
+
     deletion_keys = {
         (
             observation.metric_key,
@@ -322,6 +342,8 @@ def _persist_observations(observations: list[MetricObservationRecord], *, run_id
             if template_key is None
             else MetricObservation.template_key == template_key
         )
+        if replace_entire_metric_period:
+            continue
         session.execute(delete(MetricObservation).where(*conditions))
 
     created_at = utcnow()
@@ -1060,9 +1082,9 @@ def generate_quality_metrics(request: QualityMetricsGenerateRequest, session: Se
 
     validated = _validate_request(request)
     run_metadata_id = _start_run(validated, session)
-    scoped_account_ids = _scoped_account_ids(validated, session)
 
     try:
+        scoped_account_ids = _scoped_account_ids(validated, session)
         observations: list[MetricObservationRecord] = []
         observations.extend(
             _reconciliation_pass_rate_metrics(
@@ -1110,7 +1132,12 @@ def generate_quality_metrics(request: QualityMetricsGenerateRequest, session: Se
                 json.dumps(item.dimensions, sort_keys=True, separators=(",", ":")),
             )
         )
-        _persist_observations(observations, run_id=run_metadata_id, session=session)
+        _persist_observations(
+            observations,
+            run_id=run_metadata_id,
+            replace_entire_metric_period=not validated.account_ids,
+            session=session,
+        )
         session.flush()
 
         alert_count = sum(1 for item in observations if item.alert_status is MetricAlertStatus.ALERT)
