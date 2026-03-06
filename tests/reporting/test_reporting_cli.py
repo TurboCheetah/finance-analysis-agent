@@ -162,7 +162,8 @@ def test_reporting_generate_cli_supports_quality_trust_dashboard(tmp_path: Path)
             .select_from(MetricObservation)
             .where(MetricObservation.run_id == metric_run_id)
         )
-        assert observation_count is not None and observation_count > 0
+        assert observation_count is not None
+        assert observation_count > 0
     finally:
         session.close()
         engine.dispose()

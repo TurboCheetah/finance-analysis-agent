@@ -31,7 +31,12 @@ from finance_analysis_agent.db.models import (
 )
 from finance_analysis_agent.provenance.audit_writers import finish_run_metadata, start_run_metadata
 from finance_analysis_agent.provenance.types import RunMetadataFinishRequest, RunMetadataStartRequest
-from finance_analysis_agent.quality import QualityMetricsGenerateRequest, generate_quality_metrics
+from finance_analysis_agent.quality import (
+    MetricObservationRecord,
+    QualityMetricsGenerateRequest,
+    QualityMetricsGenerateResult,
+    generate_quality_metrics,
+)
 from finance_analysis_agent.reporting.types import (
     GeneratedReport,
     ReportRunCause,
@@ -758,7 +763,7 @@ def _build_goal_progress_payload(validated: _ValidatedRequest, session: Session)
     }
 
 
-def _serialize_metric_observation(record: object) -> dict[str, object]:
+def _serialize_metric_observation(record: MetricObservationRecord) -> dict[str, object]:
     item = record
     return {
         "key": f"{item.metric_group}.{item.metric_key}",
@@ -778,7 +783,10 @@ def _serialize_metric_observation(record: object) -> dict[str, object]:
     }
 
 
-def _build_quality_trust_dashboard_payload(validated: _ValidatedRequest, metric_result: object) -> dict[str, object]:
+def _build_quality_trust_dashboard_payload(
+    validated: _ValidatedRequest,
+    metric_result: QualityMetricsGenerateResult,
+) -> dict[str, object]:
     groups: dict[str, list[dict[str, object]]] = {
         "correctness": [],
         "automation_quality": [],
@@ -834,8 +842,7 @@ def _build_report_payload(report_type: ReportType, validated: _ValidatedRequest,
         return _build_budget_vs_actual_payload(validated, session), causes
     if report_type is ReportType.GOAL_PROGRESS:
         return _build_goal_progress_payload(validated, session), causes
-    if report_type is ReportType.QUALITY_TRUST_DASHBOARD:
-        return _build_quality_trust_dashboard_payload(validated, session), causes
+    # QUALITY_TRUST_DASHBOARD is handled separately in reporting_generate().
     raise ValueError(f"Unhandled report type: {report_type}")
 
 

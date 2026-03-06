@@ -239,6 +239,8 @@ def _make_observation(
 def _status_for_threshold(value: float | None, threshold: _Threshold) -> MetricAlertStatus:
     if value is None:
         return MetricAlertStatus.NO_DATA
+    if threshold.value is None:
+        return MetricAlertStatus.NO_DATA
     if threshold.operator == "<":
         return MetricAlertStatus.ALERT if value < float(threshold.value) else MetricAlertStatus.OK
     if threshold.operator == ">":
