@@ -433,10 +433,10 @@ Research anchors:
 - [x] TUR-44: Implement flex budgeting engine + rollover policies
 - [x] TUR-45: Implement goal ledger + recurring schedule/missed-event warnings
 - [x] TUR-46: Implement reporting_generate for core finance reports
-- [ ] TUR-47: Implement export_bundle + backup/restore round-trip
+- [x] TUR-47: Implement export_bundle + backup/restore round-trip
 - [ ] TUR-48: Implement quality metrics + trust dashboard artifacts
 
-Next issue in strict sequence: TUR-47.
+Next issue in strict sequence: TUR-48.
 
 ## 11) Risks & mitigations
 - PDF extraction brittleness by bank template.
