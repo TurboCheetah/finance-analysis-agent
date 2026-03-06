@@ -47,6 +47,7 @@ def test_quality_metrics_migration_adds_and_removes_metric_observations(tmp_path
         }.issubset(columns)
 
         indexes = {index["name"] for index in inspector.get_indexes("metric_observations")}
+        assert "ix_metric_observations_metric_group_period" in indexes
         assert "ix_metric_observations_metric_key_period" in indexes
         assert "ix_metric_observations_account_id_period_end" in indexes
         assert "ix_metric_observations_template_key" in indexes

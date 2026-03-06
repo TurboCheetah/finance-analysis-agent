@@ -43,6 +43,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
+        "ix_metric_observations_metric_group_period",
+        "metric_observations",
+        ["metric_group", "period_start", "period_end"],
+        unique=False,
+    )
+    op.create_index(
         "ix_metric_observations_metric_key_period",
         "metric_observations",
         ["metric_key", "period_start", "period_end"],
@@ -74,4 +80,5 @@ def downgrade() -> None:
     op.drop_index("ix_metric_observations_template_key", table_name="metric_observations")
     op.drop_index("ix_metric_observations_account_id_period_end", table_name="metric_observations")
     op.drop_index("ix_metric_observations_metric_key_period", table_name="metric_observations")
+    op.drop_index("ix_metric_observations_metric_group_period", table_name="metric_observations")
     op.drop_table("metric_observations")

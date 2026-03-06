@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 
 from alembic import command
+from sqlalchemy import func, select
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from typer.testing import CliRunner
 
 from finance_analysis_agent.cli import app
-from finance_analysis_agent.db.models import Account, Transaction
+from finance_analysis_agent.db.models import Account, MetricObservation, Transaction
 from finance_analysis_agent.utils.time import utcnow
 from tests.helpers import alembic_config
 
@@ -147,5 +148,21 @@ def test_reporting_generate_cli_supports_quality_trust_dashboard(tmp_path: Path)
     assert result.exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["report_types"] == ["quality_trust_dashboard"]
-    assert payload["reports"][0]["payload_json"]["metric_run_id"]
+    metric_run_id = payload["reports"][0]["payload_json"]["metric_run_id"]
+    assert metric_run_id
+    assert payload["reports"][0]["payload_json"]["metric_snapshot_id"]
     assert "quality_trust_dashboard" in result.stdout
+
+    engine = create_engine(database_url)
+    session_factory = sessionmaker(bind=engine, autoflush=False)
+    session: Session = session_factory()
+    try:
+        observation_count = session.scalar(
+            select(func.count())
+            .select_from(MetricObservation)
+            .where(MetricObservation.run_id == metric_run_id)
+        )
+        assert observation_count is not None and observation_count > 0
+    finally:
+        session.close()
+        engine.dispose()

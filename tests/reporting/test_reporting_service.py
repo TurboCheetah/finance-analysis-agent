@@ -18,6 +18,7 @@ from finance_analysis_agent.db.models import (
     Goal,
     GoalAllocation,
     GoalEvent,
+    MetricObservation,
     Report,
     RunMetadata,
     Transaction,
@@ -379,7 +380,15 @@ def test_reporting_generate_is_deterministic_for_same_snapshot(db_session: Sessi
     assert set(first_by_type) == set(second_by_type)
     for report_type in first_by_type:
         assert first_by_type[report_type].payload_hash == second_by_type[report_type].payload_hash
-        assert first_by_type[report_type].payload_json == second_by_type[report_type].payload_json
+        if report_type is ReportType.QUALITY_TRUST_DASHBOARD:
+            first_payload = dict(first_by_type[report_type].payload_json)
+            second_payload = dict(second_by_type[report_type].payload_json)
+            first_payload.pop("metric_run_id", None)
+            second_payload.pop("metric_run_id", None)
+            assert first_payload == second_payload
+            assert first_by_type[report_type].payload_json["metric_snapshot_id"] == second_by_type[report_type].payload_json["metric_snapshot_id"]
+        else:
+            assert first_by_type[report_type].payload_json == second_by_type[report_type].payload_json
 
 
 def test_reporting_generate_quality_dashboard_can_run_with_other_reports(db_session: Session) -> None:
@@ -403,6 +412,28 @@ def test_reporting_generate_quality_dashboard_can_run_with_other_reports(db_sess
     dashboard = next(item for item in result.reports if item.report_type is ReportType.QUALITY_TRUST_DASHBOARD)
     assert dashboard.payload_json["summary"]["metric_count"] >= 1
     assert isinstance(dashboard.payload_json["alerts"], list)
+    assert dashboard.payload_json["metric_run_id"]
+    assert dashboard.payload_json["metric_snapshot_id"]
+
+
+def test_reporting_generate_defers_quality_metrics_until_after_other_payload_validation(db_session: Session) -> None:
+    _seed_reporting_baseline(db_session)
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="Budget not found"):
+        reporting_generate(
+            ReportingGenerateRequest(
+                actor="tester",
+                reason="quality after validation",
+                period_month="2026-02",
+                report_types=[ReportType.QUALITY_TRUST_DASHBOARD, ReportType.BUDGET_VS_ACTUAL],
+                budget_id="budget-missing",
+            ),
+            db_session,
+        )
+    db_session.flush()
+
+    assert db_session.query(MetricObservation).count() == 0
 
 
 def test_reporting_generate_applies_account_scope_filter(db_session: Session) -> None:

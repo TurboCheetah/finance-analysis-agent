@@ -156,6 +156,17 @@ def test_generate_quality_metrics_validates_request(db_session: Session) -> None
         )
 
 
+def test_query_metric_observations_rejects_inverted_period_range(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="period_end must be >= period_start"):
+        query_metric_observations(
+            MetricObservationQueryRequest(
+                period_start=date(2026, 2, 28),
+                period_end=date(2026, 2, 1),
+            ),
+            db_session,
+        )
+
+
 def test_generate_quality_metrics_replaces_existing_snapshot_rows(db_session: Session) -> None:
     _seed_account(db_session, account_id="acct-1")
     _seed_transaction(
@@ -346,3 +357,41 @@ def test_generate_quality_metrics_raises_alerts_for_threshold_breaches(db_sessio
     assert by_key[("automation_quality", "review_time_to_inbox_zero_hours", None)].alert_status is MetricAlertStatus.ALERT
     assert by_key[("trust_health", "unknown_merchant_rate", "acct-alert")].alert_status is MetricAlertStatus.ALERT
     assert by_key[("trust_health", "low_confidence_transaction_rate", "acct-alert")].alert_status is MetricAlertStatus.ALERT
+
+
+def test_query_metric_observations_orders_multi_row_metrics_deterministically(db_session: Session) -> None:
+    _seed_account(db_session, account_id="acct-order")
+    _seed_transaction(
+        db_session,
+        transaction_id="txn-order",
+        account_id="acct-order",
+        posted_date=date(2026, 2, 2),
+        amount="-15.00",
+        merchant_id=None,
+    )
+    db_session.flush()
+
+    generate_quality_metrics(
+        QualityMetricsGenerateRequest(
+            actor="tester",
+            reason="order",
+            period_month="2026-02",
+        ),
+        db_session,
+    )
+    db_session.flush()
+
+    result = query_metric_observations(
+        MetricObservationQueryRequest(
+            period_start=date(2026, 2, 1),
+            period_end=date(2026, 2, 28),
+            metric_keys=["pdf_error_count"],
+        ),
+        db_session,
+    )
+
+    rendered = [
+        (row.template_key, row.dimensions.get("error_code"), row.metric_value)
+        for row in result.observations
+    ]
+    assert rendered == sorted(rendered, key=lambda item: (item[0] or "", item[1] or "", item[2] or 0))

@@ -670,6 +670,7 @@ class GoalEvent(Base):
 class MetricObservation(Base):
     __tablename__ = "metric_observations"
     __table_args__ = (
+        Index("ix_metric_observations_metric_group_period", "metric_group", "period_start", "period_end"),
         Index("ix_metric_observations_metric_key_period", "metric_key", "period_start", "period_end"),
         Index("ix_metric_observations_account_id_period_end", "account_id", "period_end"),
         Index("ix_metric_observations_template_key", "template_key"),

@@ -1,0 +1,70 @@
+{
+  "transactions": [
+    {
+      "id": "txn-hard-a",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-10",
+      "amount": "14.20",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "COFFEE SHOP 100",
+      "source_kind": "csv"
+    },
+    {
+      "id": "txn-hard-b",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-11",
+      "amount": "14.20",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "Coffee Shop #100",
+      "source_kind": "csv"
+    },
+    {
+      "id": "txn-soft-a",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-15",
+      "amount": "82.10",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "GROCERY OUTLET WEST",
+      "source_kind": "pdf"
+    },
+    {
+      "id": "txn-soft-b",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-16",
+      "amount": "82.50",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "GROCERY OUTLET W",
+      "source_kind": "pdf"
+    },
+    {
+      "id": "txn-negative-a",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-16",
+      "amount": "165.75",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "UTILITY ELECTRIC BILL",
+      "source_kind": "manual"
+    },
+    {
+      "id": "txn-negative-b",
+      "account_id": "acct-1",
+      "posted_date": "2026-01-19",
+      "amount": "19.00",
+      "currency": "USD",
+      "pending_status": "posted",
+      "original_statement": "BOOKSTORE",
+      "source_kind": "manual"
+    }
+  ],
+  "expected_hard_duplicates": [
+    ["txn-hard-a", "txn-hard-b"]
+  ],
+  "expected_soft_duplicates": [
+    ["txn-soft-a", "txn-soft-b"]
+  ]
+}

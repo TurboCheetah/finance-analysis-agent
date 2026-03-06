@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 import hashlib
+from importlib.resources import files
 import json
 from pathlib import Path
 from statistics import median
@@ -56,9 +57,7 @@ _ACTIVE_REVIEW_STATUSES = {
     ReviewItemStatus.TO_REVIEW.value,
     ReviewItemStatus.IN_PROGRESS.value,
 }
-_FIXTURES_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
-_PDF_FIXTURES_DIR = _FIXTURES_ROOT / "pdf_quality"
-_DEDUPE_FIXTURE_PATH = _FIXTURES_ROOT / "dedupe" / "labeled_pairs.json"
+_FIXTURES_PACKAGE = "finance_analysis_agent.fixtures"
 
 
 @dataclass(slots=True)
@@ -753,21 +752,39 @@ def _build_fixture_request(fixture: dict[str, object], *, template_key: str) -> 
     )
 
 
+def _pdf_fixture_resources() -> list[object]:
+    fixture_dir = files(_FIXTURES_PACKAGE).joinpath("pdf_quality")
+    return sorted(
+        (resource for resource in fixture_dir.iterdir() if resource.name.endswith(".json")),
+        key=lambda resource: resource.name,
+    )
+
+
+def _dedupe_fixture_payload() -> dict[str, object]:
+    return json.loads(
+        files(_FIXTURES_PACKAGE).joinpath("dedupe").joinpath("labeled_pairs.json").read_text(encoding="utf-8")
+    )
+
+
 def _pdf_fixture_metrics(
     validated: _ValidatedRequest,
     *,
     run_id: str,
 ) -> list[MetricObservationRecord]:
     observations: list[MetricObservationRecord] = []
-    for fixture_path in sorted(_PDF_FIXTURES_DIR.glob("*.json")):
-        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    for fixture_resource in _pdf_fixture_resources():
+        fixture = json.loads(fixture_resource.read_text(encoding="utf-8"))
         raw_template = fixture.get("template_hint")
-        template_key = raw_template.strip() if isinstance(raw_template, str) and raw_template.strip() else fixture_path.stem
+        template_key = (
+            raw_template.strip()
+            if isinstance(raw_template, str) and raw_template.strip()
+            else Path(fixture_resource.name).stem
+        )
         request = _build_fixture_request(fixture, template_key=template_key)
         text_pages = fixture.get("text_pages")
         expected_rows = fixture.get("expected_rows")
         if not isinstance(text_pages, list) or not isinstance(expected_rows, list):
-            raise ValueError(f"Fixture {fixture_path.name} is missing text_pages or expected_rows")
+            raise ValueError(f"Fixture {fixture_resource.name} is missing text_pages or expected_rows")
 
         response = run_layered_extraction(
             request,
@@ -904,7 +921,7 @@ def _dedupe_fixture_metrics(
     *,
     run_id: str,
 ) -> list[MetricObservationRecord]:
-    fixture = json.loads(_DEDUPE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    fixture = _dedupe_fixture_payload()
     engine = create_engine("sqlite:///:memory:")
     session_factory = sessionmaker(bind=engine, autoflush=False)
     Base.metadata.create_all(engine)
@@ -1060,6 +1077,13 @@ def generate_quality_metrics(request: QualityMetricsGenerateRequest, session: Se
 def query_metric_observations(request: MetricObservationQueryRequest, session: Session) -> MetricObservationQueryResult:
     """Query persisted metric observations with deterministic ordering."""
 
+    if (
+        request.period_start is not None
+        and request.period_end is not None
+        and request.period_end < request.period_start
+    ):
+        raise ValueError("period_end must be >= period_start")
+
     conditions: list[object] = []
     if request.period_start is not None:
         conditions.append(MetricObservation.period_start >= request.period_start)
@@ -1084,19 +1108,23 @@ def query_metric_observations(request: MetricObservationQueryRequest, session: S
             normalized_statuses.append(MetricAlertStatus(value.strip()).value)
         conditions.append(MetricObservation.alert_status.in_(sorted(set(normalized_statuses))))
 
-    rows = session.scalars(
-        select(MetricObservation)
-        .where(*conditions)
-        .order_by(
-            MetricObservation.period_start.asc(),
-            MetricObservation.period_end.asc(),
-            MetricObservation.metric_group.asc(),
-            MetricObservation.metric_key.asc(),
-            MetricObservation.account_id.asc(),
-            MetricObservation.template_key.asc(),
-            MetricObservation.created_at.asc(),
-            MetricObservation.id.asc(),
+    rows = session.scalars(select(MetricObservation).where(*conditions)).all()
+    observations = [_to_record(row) for row in rows]
+    observations.sort(
+        key=lambda item: (
+            item.period_start.isoformat(),
+            item.period_end.isoformat(),
+            item.metric_group,
+            item.metric_key,
+            item.account_id or "",
+            item.template_key or "",
+            json.dumps(item.dimensions, sort_keys=True, separators=(",", ":")),
+            "" if item.metric_value is None else f"{item.metric_value:.6f}",
+            "" if item.numerator is None else f"{item.numerator:.6f}",
+            "" if item.denominator is None else f"{item.denominator:.6f}",
+            item.alert_status.value,
+            item.threshold_operator or "",
+            "" if item.threshold_value is None else f"{item.threshold_value:.6f}",
         )
-    ).all()
-
-    return MetricObservationQueryResult(observations=[_to_record(row) for row in rows])
+    )
+    return MetricObservationQueryResult(observations=observations)

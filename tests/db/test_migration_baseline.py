@@ -64,6 +64,7 @@ def _assert_expected_indexes(inspector: sa.Inspector) -> None:
             ("approved_adjustment_txn_id",),
         },
         "metric_observations": {
+            ("metric_group", "period_start", "period_end"),
             ("metric_key", "period_start", "period_end"),
             ("account_id", "period_end"),
             ("template_key",),

@@ -1,0 +1,35 @@
+{
+  "name": "non_tabular_layout_a",
+  "template_hint": "non_tabular_layout_a",
+  "metadata": {
+    "statement_year": 2026,
+    "currency": "USD",
+    "issuer": "regional_bank"
+  },
+  "text_pages": [
+    "Account activity\n01/16 Utility Bill -120.55\n01/17 Gas Station -36.70\n01/18 ATM Withdrawal 40.00-"
+  ],
+  "expected_rows": [
+    {
+      "posted_date": "2026-01-16",
+      "amount": "-120.55",
+      "currency": "USD",
+      "original_statement": "Utility Bill",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-17",
+      "amount": "-36.70",
+      "currency": "USD",
+      "original_statement": "Gas Station",
+      "page_no": 1
+    },
+    {
+      "posted_date": "2026-01-18",
+      "amount": "-40.00",
+      "currency": "USD",
+      "original_statement": "ATM Withdrawal",
+      "page_no": 1
+    }
+  ]
+}
