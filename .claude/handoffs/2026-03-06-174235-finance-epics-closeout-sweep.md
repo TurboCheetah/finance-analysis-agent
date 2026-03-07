@@ -2,7 +2,7 @@
 
 ## Session Metadata
 - Created: 2026-03-06 17:42:35
-- Project: /Users/rnjsports/Documents/turbo/src/finance-analysis-agent
+- Project: {REPO_ROOT}
 - Branch: main
 - Session duration: single-session finance epic verification sweep
 
@@ -52,14 +52,14 @@ The remaining epics are already satisfied through stable service-layer modules a
 
 ## Key Patterns Discovered
 
-Finance epics in this repo are best closed from service/API evidence plus focused tests, not by searching for new UI or CLI surfaces. Dependency order matters even for closeout: `TUR-29` underpins `TUR-28`, and both underpin `TUR-30`, so verification should follow that same sequence. The repo currently has an untracked `TUR-27` handoff file, but tracked files remain clean at `HEAD`, so code verification can proceed safely if tracked cleanliness and commit baseline are used instead of raw `git status` alone. Migration-focused tests are part of the acceptance evidence for these epics because several acceptance criteria depend on durable schema guarantees rather than only in-memory behavior.
+Finance epics in this repo are best closed from service/API evidence plus focused tests, not by searching for new UI or CLI surfaces. Dependency order matters even for closeout: `TUR-29` underpins `TUR-28`, and both underpin `TUR-30`, so verification should follow that same sequence. A `TUR-27` handoff artifact may also be present locally or tracked in the repo, so code verification should rely on tracked cleanliness and the commit baseline instead of raw `git status` alone. Migration-focused tests are part of the acceptance evidence for these epics because several acceptance criteria depend on durable schema guarantees rather than only in-memory behavior.
 
 ## Work Completed
 
 ## Tasks Finished
 
 - [x] Confirmed baseline `HEAD` remained `3b1d6b2de7db1ba5d4f929326326fdcd382b2ed5`
-- [x] Confirmed tracked repo state was clean before verification, while preserving the untracked `TUR-27` handoff artifact
+- [x] Confirmed tracked repo state was clean before verification, while preserving the `TUR-27` handoff artifact
 - [x] Confirmed all child issues under `TUR-29`, `TUR-28`, and `TUR-30` were already `Done`
 - [x] Reran `TUR-29` verification: `uv run --with pytest pytest tests/dedupe tests/reconcile tests/db/test_dedupe_pair_order_migration.py tests/db/test_reconciliation_migration.py`
 - [x] Verified `TUR-29` suite passed with `47 passed in 6.71s`
@@ -104,7 +104,7 @@ Finance epics in this repo are best closed from service/API evidence plus focuse
 
 ## Important Context
 
-The critical point from this session is that the remaining finance project epics were not left open because of missing code; they were left open because Linear status had not yet been synchronized after their child issues were completed. The verification evidence is fresh on `main` at commit `3b1d6b2de7db1ba5d4f929326326fdcd382b2ed5`, and each epic has a precise acceptance-aligned test command with a passing result: `TUR-29` uses the dedupe/reconcile and migration suite (`47 passed in 6.71s`), `TUR-28` uses the budget/goals/recurring and migration suite (`73 passed in 10.53s`), and `TUR-30` uses the reporting/backup suite (`28 passed in 5.10s`). The only notable runtime noise was sqlite datetime adapter deprecation warnings from SQLAlchemy in the migration-heavy suites; there was no failing behavior and no evidence of an epic-level gap. Also note that `.claude/handoffs/2026-03-06-164532-tur-27-epic-closeout.md` remains untracked locally; preserve it, but do not treat it as a repo-dirty blocker when evaluating tracked `main` state.
+The critical point from this session is that the remaining finance project epics were not left open because of missing code; they were left open because Linear status had not yet been synchronized after their child issues were completed. The verification evidence is fresh on `main` at commit `3b1d6b2de7db1ba5d4f929326326fdcd382b2ed5`, and each epic has a precise acceptance-aligned test command with a passing result: `TUR-29` uses the dedupe/reconcile and migration suite (`47 passed in 6.71s`), `TUR-28` uses the budget/goals/recurring and migration suite (`73 passed in 10.53s`), and `TUR-30` uses the reporting/backup suite (`28 passed in 5.10s`). The only notable runtime noise was sqlite datetime adapter deprecation warnings from SQLAlchemy in the migration-heavy suites; there was no failing behavior and no evidence of an epic-level gap. Also note that `.claude/handoffs/2026-03-06-164532-tur-27-epic-closeout.md` may already be present locally or tracked in the repo; preserve it, but do not treat it as a repo-dirty blocker when evaluating tracked `main` state.
 
 ## Assumptions Made
 
@@ -114,7 +114,7 @@ The critical point from this session is that the remaining finance project epics
 
 ## Potential Gotchas
 
-- Do not use raw `git status` alone as a closeout gate in this repo right now, because the untracked `TUR-27` handoff file is expected local state.
+- Do not use raw `git status` alone as a closeout gate in this repo right now, because a `TUR-27` handoff file may be expected local or tracked state.
 - If you rerun any suite later, cite the exact commit you validated, because future local edits would weaken the closeout evidence if they are mixed together.
 - If any one epic unexpectedly fails after a rerun, stop the sweep at that point and create a follow-on implementation issue under that epic rather than force-closing later dependent epics.
 
@@ -125,7 +125,7 @@ The critical point from this session is that the remaining finance project epics
 - `git` for baseline commit and tracked-clean verification
 - `uv` for local pytest execution
 - Linear MCP integration for epic inspection, attachment upload, comments, and status updates
-- Session-handoff skill scripts at `/Users/rnjsports/.agents/skills/session-handoff/scripts/`
+- Session-handoff skill scripts at `{AGENT_SKILLS_ROOT}/session-handoff/scripts/`
 
 ## Active Processes
 
