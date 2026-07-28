@@ -3,14 +3,47 @@
   "extends": [
     "config:recommended",
     "helpers:pinGitHubActionDigests",
-    "group:allNonMajor"
+    "group:allNonMajor",
+    ":enableVulnerabilityAlerts"
   ],
-  "labels": ["Meta: Dependencies"],
-  "schedule": ["before 12pm on Sunday"],
+  "labels": [
+    "Meta: Dependencies"
+  ],
+  "schedule": [
+    "before 12pm on Sunday"
+  ],
   "packageRules": [
     {
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "automerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false
+    },
+    {
+      "matchJsonata": [
+        "$exists(vulnerabilityFixVersion)"
+      ],
+      "addLabels": [
+        "security"
+      ],
+      "automerge": false
     }
-  ]
+  ],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "addLabels": [
+      "security"
+    ],
+    "automerge": false,
+    "vulnerabilityFixStrategy": "lowest"
+  }
 }
