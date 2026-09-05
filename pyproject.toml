@@ -23,7 +23,11 @@ build-backend = "hatchling.build"
 finance-analysis-agent = "finance_analysis_agent.cli:app"
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers"
 testpaths = ["tests"]
+markers = [
+    "e2e: shipped-surface end-to-end workflow coverage",
+]
 
 [tool.hatch.build.targets.wheel]
 include = ["src/finance_analysis_agent/fixtures/**/*.json"]
