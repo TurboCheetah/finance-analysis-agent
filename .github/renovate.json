@@ -1,16 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    "group:allNonMajor"
-  ],
-  "labels": ["Meta: Dependencies"],
-  "schedule": ["before 12pm on Sunday"],
-  "packageRules": [
-    {
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "automerge": true
-    }
+    "github>TurboCheetah/renovate-config"
   ]
 }
